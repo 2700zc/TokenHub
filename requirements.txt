@@ -1,0 +1,2 @@
+# TokenHub - No third-party dependencies
+# Uses only Python standard library (tkinter, urllib, threading, json, ctypes, winreg)
