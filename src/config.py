@@ -5,16 +5,34 @@ Handles workspace_id and cookie persistence in config.json.
 
 import json
 import os
+import sys
 
 try:
     from .logger import log_config_load, log_config_save
 except ImportError:
     from logger import log_config_load, log_config_save
 
+def _get_app_dir():
+    """Get the directory where the application executable or script resides.
+    
+    When running as a PyInstaller bundle, sys.executable points to the exe.
+    When running as a script, __file__ points to the source file.
+    This ensures config.json is always saved next to the app, not in CWD.
+    """
+    if getattr(sys, 'frozen', False):
+        # Running as PyInstaller bundle
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as Python script
+        return os.path.dirname(os.path.abspath(__file__))
+
+# Resolve config path relative to the application directory
+_APP_DIR = _get_app_dir()
+
 class Config:
     """Configuration manager for TokenHub."""
     
-    CONFIG_FILE = 'config.json'
+    CONFIG_FILE = os.path.join(_APP_DIR, 'config.json')
     
     def __init__(self):
         self.workspace_id = ""
