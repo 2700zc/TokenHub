@@ -111,7 +111,8 @@ class TokenHubApp:
             self.root, theme_colors,
             on_settings=self._show_settings,
             on_help=self._show_help,
-            on_exit=self._exit
+            on_exit=self._exit,
+            on_refresh=self._fetch_data
         )
         
         # Create settings window (lazy - created on demand)

@@ -51,11 +51,13 @@ class FloatingWindow:
     LABELS = {'rolling': '滚动用量', 'weekly': '每周用量', 'monthly': '每月用量'}
     
     def __init__(self, root: tk.Tk, theme_colors: dict,
-                 on_settings: Callable, on_help: Callable, on_exit: Callable):
+                 on_settings: Callable, on_help: Callable, on_exit: Callable,
+                 on_refresh: Callable = None):
         self.root = root
         self.on_settings = on_settings
         self.on_help = on_help
         self.on_exit = on_exit
+        self.on_refresh = on_refresh
         
         self._is_docked = True
         self._is_visible = True
@@ -92,9 +94,14 @@ class FloatingWindow:
         self.window.bind('<B1-Motion>', self._on_drag)
         self.window.bind('<ButtonRelease-1>', self._on_release)
         self.window.bind('<Button-3>', lambda e: self._show_menu(e))
+        self.window.bind('<Enter>', self._on_enter)
         
         self._drag_start_x = 0
         self._drag_start_y = 0
+        
+        # Hover refresh cooldown (avoid frequent refresh when mouse jittering)
+        self._last_refresh_time = 0
+        self._refresh_cooldown = 5  # seconds
         
         # Monitor
         self._schedule_check()
@@ -303,6 +310,15 @@ class FloatingWindow:
                 self._animating = False
         
         step()
+    
+    # Hover refresh
+    def _on_enter(self, event):
+        """Trigger data refresh when mouse enters the floating window."""
+        if self.on_refresh and not self._dragging:
+            now = time_module.time()
+            if now - self._last_refresh_time >= self._refresh_cooldown:
+                self._last_refresh_time = now
+                self.on_refresh()
     
     # Drag
     def _on_press(self, event):

@@ -14,13 +14,13 @@ def build():
     clean()
     subprocess.run([
         'pyinstaller',
-        '--onedir',
+        '--onefile',
         '--noconsole',
         '--name', 'TokenHub',
         '--clean',
         'src/main.py'
     ], check=True)
-    print('Build complete. Check dist/TokenHub/')
+    print('Build complete. Check dist/TokenHub.exe')
 
 if __name__ == '__main__':
     build()
