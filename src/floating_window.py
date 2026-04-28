@@ -41,11 +41,12 @@ class FloatingWindow:
     
     WINDOW_WIDTH = 720
     EXPANDED_HEIGHT = 58
-    COLLAPSED_HEIGHT = 3
+    COLLAPSED_SIZE = 3    # visible strip when hidden (any edge)
     CORNER_RADIUS = 8
     ANIM_DURATION = 180
     TRIGGER_ZONE = 12
     HIDE_DELAY = 200
+    EDGE_THRESHOLD = 20   # distance from screen edge to trigger docking
     
     ICONS = {'rolling': '📈', 'weekly': '📅', 'monthly': '🕐'}
     LABELS = {'rolling': '滚动用量', 'weekly': '每周用量', 'monthly': '每月用量'}
@@ -59,13 +60,12 @@ class FloatingWindow:
         self.on_exit = on_exit
         self.on_refresh = on_refresh
         
-        self._is_docked = True
+        self._docked_edge = 'top'  # 'top', 'bottom', 'left', 'right', or None
         self._is_visible = True
         self._animating = False
         self._hide_timer = None
         self._dragging = False
         self._normal_y = 8
-        self._hidden_y = -self.EXPANDED_HEIGHT + self.COLLAPSED_HEIGHT
         
         # Create borderless window (NO title bar at all)
         self.window = tk.Toplevel(root)
@@ -73,10 +73,13 @@ class FloatingWindow:
         self.window.attributes('-topmost', True)
         
         # Position
-        sw = self.window.winfo_screenwidth()
-        self._x = (sw - self.WINDOW_WIDTH) // 2
+        self._screen_width = self.window.winfo_screenwidth()
+        self._screen_height = self.window.winfo_screenheight()
+        self._normal_x = (self._screen_width - self.WINDOW_WIDTH) // 2
+        self._x = self._normal_x
+        self._y = self._normal_y
         self.window.geometry(
-            f"{self.WINDOW_WIDTH}x{self.EXPANDED_HEIGHT}+{self._x}+{self._normal_y}")
+            f"{self.WINDOW_WIDTH}x{self.EXPANDED_HEIGHT}+{self._x}+{self._y}")
         
         # Apply DWM effects after window exists
         self.window.after(10, self._setup_window_effects)
@@ -244,39 +247,103 @@ class FloatingWindow:
         self._check_auto_hide()
         self._schedule_check()
     
+    def _detect_edge(self):
+        """Detect which screen edge the window is nearest to.
+        Returns 'top', 'bottom', 'left', 'right', or None."""
+        x = self.window.winfo_x()
+        y = self.window.winfo_y()
+        
+        distances = {}
+        if y < self.EDGE_THRESHOLD:
+            distances['top'] = y
+        if y + self.EXPANDED_HEIGHT > self._screen_height - self.EDGE_THRESHOLD:
+            distances['bottom'] = self._screen_height - (y + self.EXPANDED_HEIGHT)
+        if x < self.EDGE_THRESHOLD:
+            distances['left'] = x
+        if x + self.WINDOW_WIDTH > self._screen_width - self.EDGE_THRESHOLD:
+            distances['right'] = self._screen_width - (x + self.WINDOW_WIDTH)
+        
+        if distances:
+            # Prioritise top/bottom (horizontal toolbar) over left/right
+            edge_priority = {'top': 0, 'bottom': 1, 'left': 2, 'right': 3}
+            return min(distances, key=lambda e: (distances[e], edge_priority[e]))
+        return None
+    
+    def _get_hidden_pos(self):
+        """Compute the (x, y) position when the window is hidden at its docked edge."""
+        if self._docked_edge == 'top':
+            return (self._normal_x, -(self.EXPANDED_HEIGHT - self.COLLAPSED_SIZE))
+        elif self._docked_edge == 'bottom':
+            return (self._normal_x, self._screen_height - self.COLLAPSED_SIZE)
+        elif self._docked_edge == 'left':
+            return (-(self.WINDOW_WIDTH - self.COLLAPSED_SIZE), self._normal_y)
+        elif self._docked_edge == 'right':
+            return (self._screen_width - self.COLLAPSED_SIZE, self._normal_y)
+        return (self._normal_x, self._normal_y)
+    
     def _check_auto_hide(self):
         if self._animating or self._dragging:
             return
         
-        my = self.window.winfo_pointery()
-        cy = self.window.winfo_y()
-        is_at_top = cy < 20 or self._is_docked
+        # Refresh screen dimensions (may change when resolution changes)
+        self._screen_width = self.window.winfo_screenwidth()
+        self._screen_height = self.window.winfo_screenheight()
         
-        if is_at_top:
-            self._is_docked = True
-            if my < self.TRIGGER_ZONE:
-                if not self._is_visible:
-                    self._animate_show()
-                if self._hide_timer:
-                    self.window.after_cancel(self._hide_timer)
-                    self._hide_timer = None
-            else:
-                wx1 = self.window.winfo_x()
-                wx2 = wx1 + self.WINDOW_WIDTH
-                wy1 = self.window.winfo_y()
-                wy2 = wy1 + (self.EXPANDED_HEIGHT if self._is_visible else self.COLLAPSED_HEIGHT)
-                inside = wx1 <= self.window.winfo_pointerx() <= wx2 and wy1 <= my <= wy2
-                
-                if not inside and self._is_visible and not self._hide_timer:
-                    self._hide_timer = self.window.after(self.HIDE_DELAY, self._do_hide)
+        # Clamp normal positions to visible screen area
+        self._normal_x = max(0, min(self._normal_x, self._screen_width - self.WINDOW_WIDTH))
+        self._normal_y = max(0, min(self._normal_y, self._screen_height - self.EXPANDED_HEIGHT))
+        
+        # Detect which edge we're near
+        edge = self._detect_edge()
+        if edge:
+            self._docked_edge = edge
+        elif not self._is_visible and self._docked_edge:
+            # Hidden and no longer near an edge (e.g. screen resize) — stay docked
+            pass
         else:
-            self._is_docked = False
+            # Free-floating — no auto-hide
+            self._docked_edge = None
+        
+        if not self._docked_edge:
+            # Not near any edge, ensure visible
             if not self._is_visible:
                 self._animate_show()
+            return
+        
+        mx = self.window.winfo_pointerx()
+        my = self.window.winfo_pointery()
+        
+        # Check if mouse is in trigger zone for this edge
+        in_trigger = False
+        if self._docked_edge == 'top':
+            in_trigger = my < self.TRIGGER_ZONE
+        elif self._docked_edge == 'bottom':
+            in_trigger = my > self._screen_height - self.TRIGGER_ZONE
+        elif self._docked_edge == 'left':
+            in_trigger = mx < self.TRIGGER_ZONE
+        elif self._docked_edge == 'right':
+            in_trigger = mx > self._screen_width - self.TRIGGER_ZONE
+        
+        # Check if mouse is inside the window
+        wx = self.window.winfo_x()
+        wy = self.window.winfo_y()
+        wx2 = wx + self.WINDOW_WIDTH
+        wy2 = wy + (self.EXPANDED_HEIGHT if self._is_visible else self.COLLAPSED_SIZE)
+        inside = wx <= mx <= wx2 and wy <= my <= wy2
+        
+        if in_trigger or inside:
+            if not self._is_visible:
+                self._animate_show()
+            if self._hide_timer:
+                self.window.after_cancel(self._hide_timer)
+                self._hide_timer = None
+        else:
+            if self._is_visible and not self._hide_timer:
+                self._hide_timer = self.window.after(self.HIDE_DELAY, self._do_hide)
     
     def _do_hide(self):
         self._hide_timer = None
-        if self._is_docked and self._is_visible:
+        if self._docked_edge and self._is_visible:
             self._animate_hide()
     
     # Animation
@@ -285,16 +352,20 @@ class FloatingWindow:
             return
         self._animating = True
         self._is_visible = False
-        self._run_animation(self._normal_y, self._hidden_y)
+        start = (self._normal_x, self._normal_y)
+        end = self._get_hidden_pos()
+        self._run_animation(start, end)
     
     def _animate_show(self):
         if self._animating:
             return
         self._animating = True
         self._is_visible = True
-        self._run_animation(self._hidden_y, self._normal_y)
+        start = self._get_hidden_pos()
+        end = (self._normal_x, self._normal_y)
+        self._run_animation(start, end)
     
-    def _run_animation(self, start_y, end_y):
+    def _run_animation(self, start_pos, end_pos):
         start_time = time_module.time()
         duration = self.ANIM_DURATION / 1000.0
         
@@ -302,8 +373,11 @@ class FloatingWindow:
             elapsed = time_module.time() - start_time
             t = min(elapsed / duration, 1.0)
             ease = 1 - math.pow(1 - t, 3)
-            current_y = int(start_y + (end_y - start_y) * ease)
-            self.window.geometry(f'+{self._x}+{current_y}')
+            current_x = int(start_pos[0] + (end_pos[0] - start_pos[0]) * ease)
+            current_y = int(start_pos[1] + (end_pos[1] - start_pos[1]) * ease)
+            self._x = current_x
+            self._y = current_y
+            self.window.geometry(f'+{current_x}+{current_y}')
             if t < 1.0:
                 self.window.after(16, step)
             else:
@@ -334,10 +408,11 @@ class FloatingWindow:
             return
         x = event.x_root - self._drag_start_x
         y = event.y_root - self._drag_start_y
-        self._x = x
+        self._normal_x = x
         self._normal_y = y
+        self._x = x
+        self._y = y
         self.window.geometry(f'+{x}+{y}')
-        self._is_docked = False
         if not self._is_visible:
             self._is_visible = True
     
