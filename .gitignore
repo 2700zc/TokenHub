@@ -17,6 +17,12 @@ tokenhub.log
 # 原始需求文档（不上传）
 要求.txt
 
+# curl 命令示例（含敏感 auth 信息）
+curl.txt
+
+# 构建产物压缩包
+dist.zip
+
 # IDE
 .vscode/
 .idea/

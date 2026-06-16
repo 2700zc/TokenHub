@@ -6,13 +6,52 @@ Allows user to input Workspace ID and Cookie.
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable, Optional
+import re
+import urllib.parse
 from .config import Config
+
+
+def parse_curl_text(text: str) -> dict:
+    """Parse curl command text to extract workspace_id, cookie, server_id."""
+    text = re.sub(r'\^[ \t]*\r?\n', '', text)
+    text = re.sub(r'\^(.)', r'\1', text)
+
+    result = {}
+
+    match = re.search(r'-H\s+"[Xx]-[Ss]erver-[Ii][Dd]:\s*([^"]+)"', text)
+    if match:
+        result['server_id'] = match.group(1).strip()
+
+    if 'server_id' not in result:
+        match = re.search(r'\?id=([a-f0-9]+)', text)
+        if match:
+            result['server_id'] = match.group(1).strip()
+
+    match = re.search(r'-H\s+"[Cc]ookie:\s*([^"]+)"', text)
+    if match:
+        result['cookie'] = match.group(1).strip()
+    else:
+        match = re.search(r'-b\s+"([^"]+)"', text)
+        if match:
+            result['cookie'] = match.group(1).strip()
+
+    match = re.search(r'/workspace/(wrk_[^"\s/]+)', text, re.IGNORECASE)
+    if match:
+        result['workspace_id'] = match.group(1).strip()
+
+    if 'workspace_id' not in result:
+        match = re.search(r'%22s%22%3A%22(wrk_[^%]+)%22', text)
+        if match:
+            result['workspace_id'] = urllib.parse.unquote(match.group(1))
+
+    return result
+
 
 class SettingsWindow:
     """Settings window for configuring Workspace ID and Cookie."""
     
     WINDOW_WIDTH = 520
-    WINDOW_HEIGHT = 520
+    WINDOW_HEIGHT = 580
     
     def __init__(self, root: tk.Tk, config: Config, theme_colors: dict,
                  on_save: Optional[Callable] = None):
@@ -113,10 +152,6 @@ class SettingsWindow:
                                bg=bg, fg=accent)
         server_hint.pack(anchor=tk.W)
         
-        # Buttons frame
-        btn_frame = tk.Frame(main_frame, bg=bg)
-        btn_frame.pack(fill=tk.X, pady=15)
-        
         # Button colors based on theme
         if self.theme_colors.get('is_dark', False):
             btn_bg = '#3c3c3c'
@@ -128,6 +163,29 @@ class SettingsWindow:
             btn_fg = '#000000'
             btn_active_bg = '#0078d4'
             btn_active_fg = '#ffffff'
+        
+        # Import curl button
+        import_btn = tk.Button(server_frame, text="从curl命令导入",
+                               font=('Microsoft YaHei', 9),
+                               bg=btn_bg, fg=btn_fg,
+                               activebackground=btn_active_bg,
+                               activeforeground=btn_active_fg,
+                               relief=tk.RAISED, bd=1,
+                               command=self._show_curl_import_dialog)
+        import_btn.pack(anchor=tk.W, pady=(8, 0))
+        
+        reset_btn = tk.Button(server_frame, text="重置",
+                              font=('Microsoft YaHei', 9),
+                              bg=btn_bg, fg=btn_fg,
+                              activebackground='#ff6b6b',
+                              activeforeground='#ffffff',
+                              relief=tk.RAISED, bd=1,
+                              command=self._reset)
+        reset_btn.pack(anchor=tk.W, pady=(4, 0))
+        
+        # Buttons frame
+        btn_frame = tk.Frame(main_frame, bg=bg)
+        btn_frame.pack(fill=tk.X, pady=15)
         
         save_btn = tk.Button(btn_frame, text="保存",
                             font=('Microsoft YaHei', 11, 'bold'),
@@ -207,6 +265,120 @@ class SettingsWindow:
             self.window.destroy()
             self.window = None
     
+    def _reset(self):
+        """Clear all input fields."""
+        self.ws_entry.delete(0, tk.END)
+        self.cookie_text.delete('1.0', tk.END)
+        self.server_entry.delete(0, tk.END)
+
+    def _show_curl_import_dialog(self):
+        """Show a dialog for pasting curl command and auto-filling fields."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("从curl命令导入")
+        dialog.resizable(False, False)
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        bg = self.theme_colors['bg']
+        fg = self.theme_colors['fg']
+        accent = self.theme_colors['accent']
+        dialog.configure(bg=bg)
+
+        dw = 560
+        dh = 360
+        sw = dialog.winfo_screenwidth()
+        sh = dialog.winfo_screenheight()
+        dialog.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        frame = tk.Frame(dialog, bg=bg, padx=16, pady=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frame, text="将完整的 curl 命令粘贴到下方文本框中：",
+                 font=('Microsoft YaHei', 10),
+                 bg=bg, fg=fg).pack(anchor=tk.W)
+
+        text_widget = tk.Text(frame, width=60, height=10,
+                              font=('Consolas', 10),
+                              bg='#ffffff' if not self.theme_colors.get('is_dark', False) else '#2d2d2d',
+                              fg='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff',
+                              insertbackground='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff',
+                              wrap=tk.WORD)
+        text_widget.pack(fill=tk.BOTH, expand=True, pady=8)
+        text_widget.focus_set()
+
+        btn_frame = tk.Frame(frame, bg=bg)
+        btn_frame.pack(fill=tk.X)
+
+        def on_parse():
+            curl_text = text_widget.get('1.0', tk.END).strip()
+            if not curl_text:
+                messagebox.showwarning("警告", "请先粘贴 curl 命令", parent=dialog)
+                return
+
+            parsed = parse_curl_text(curl_text)
+            missing = []
+            if not parsed.get('workspace_id'):
+                missing.append("Workspace ID")
+            if not parsed.get('cookie'):
+                missing.append("Cookie")
+            if not parsed.get('server_id'):
+                missing.append("Server ID")
+
+            if parsed.get('workspace_id'):
+                self.ws_entry.delete(0, tk.END)
+                self.ws_entry.insert(0, parsed['workspace_id'])
+            if parsed.get('cookie'):
+                self.cookie_text.delete('1.0', tk.END)
+                self.cookie_text.insert(tk.END, parsed['cookie'])
+            if parsed.get('server_id'):
+                self.server_entry.delete(0, tk.END)
+                self.server_entry.insert(0, parsed['server_id'])
+
+            if missing:
+                msg = f"成功导入以下字段：\n" \
+                      f"  Workspace ID: {'✓' if parsed.get('workspace_id') else '✗'}\n" \
+                      f"  Cookie: {'✓' if parsed.get('cookie') else '✗'}\n" \
+                      f"  Server ID: {'✓' if parsed.get('server_id') else '✗'}\n\n" \
+                      f"以下字段未能自动识别，请手动填写：\n- " + "\n- ".join(missing)
+                messagebox.showinfo("部分导入成功", msg, parent=dialog)
+            else:
+                messagebox.showinfo("导入成功", "所有字段已自动填入，请点击「保存」确认。", parent=dialog)
+                dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        if self.theme_colors.get('is_dark', False):
+            btn_bg_d = '#3c3c3c'
+            btn_fg_d = '#ffffff'
+            btn_active_d = '#4fc1ff'
+            btn_active_fg_d = '#000000'
+        else:
+            btn_bg_d = '#e5e5e5'
+            btn_fg_d = '#000000'
+            btn_active_d = '#0078d4'
+            btn_active_fg_d = '#ffffff'
+
+        parse_btn = tk.Button(btn_frame, text="解析并填入",
+                              font=('Microsoft YaHei', 10, 'bold'),
+                              bg=btn_active_d, fg=btn_active_fg_d,
+                              activebackground=btn_active_d,
+                              activeforeground=btn_active_fg_d,
+                              relief=tk.RAISED, bd=2,
+                              command=on_parse)
+        parse_btn.pack(side=tk.LEFT, padx=6)
+
+        cancel_btn = tk.Button(btn_frame, text="取消",
+                               font=('Microsoft YaHei', 10),
+                               bg=btn_bg_d, fg=btn_fg_d,
+                               activebackground='#ff6b6b',
+                               activeforeground='#ffffff',
+                               relief=tk.RAISED, bd=2,
+                               command=on_cancel)
+        cancel_btn.pack(side=tk.LEFT, padx=6)
+
+        dialog.bind('<Escape>', lambda e: on_cancel())
+
     def hide(self):
         """Hide the settings window."""
         if self.window:
