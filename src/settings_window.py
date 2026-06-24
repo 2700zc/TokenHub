@@ -164,24 +164,27 @@ class SettingsWindow:
             btn_active_bg = '#0078d4'
             btn_active_fg = '#ffffff'
         
-        # Import curl button
-        import_btn = tk.Button(server_frame, text="从curl命令导入",
+        # Action buttons row: Import curl and Reset side by side
+        action_frame = tk.Frame(server_frame, bg=bg)
+        action_frame.pack(fill=tk.X, pady=(8, 0))
+
+        import_btn = tk.Button(action_frame, text="从curl命令导入",
                                font=('Microsoft YaHei', 9),
                                bg=btn_bg, fg=btn_fg,
                                activebackground=btn_active_bg,
                                activeforeground=btn_active_fg,
                                relief=tk.RAISED, bd=1,
                                command=self._show_curl_import_dialog)
-        import_btn.pack(anchor=tk.W, pady=(8, 0))
-        
-        reset_btn = tk.Button(server_frame, text="重置",
+        import_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        reset_btn = tk.Button(action_frame, text="重置",
                               font=('Microsoft YaHei', 9),
                               bg=btn_bg, fg=btn_fg,
                               activebackground='#ff6b6b',
                               activeforeground='#ffffff',
                               relief=tk.RAISED, bd=1,
                               command=self._reset)
-        reset_btn.pack(anchor=tk.W, pady=(4, 0))
+        reset_btn.pack(side=tk.LEFT)
         
         # Buttons frame
         btn_frame = tk.Frame(main_frame, bg=bg)

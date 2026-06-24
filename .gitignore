@@ -39,3 +39,6 @@ Desktop.ini
 venv/
 env/
 ENV/
+
+# 官网（单独部署）
+website/
