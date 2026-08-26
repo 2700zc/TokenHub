@@ -103,11 +103,12 @@ class ApiClient:
         result = {}
         
         # Extract usage data using regex
-        # Pattern matches: rollingUsage:$R[1]={status:"ok",resetInSec:8551,usagePercent:0}
+        # Matches both old format: ...usagePercent:0}
+        # and new format: ...usagePercent:19.3,usage:231665560,limit:1200000000}
         patterns = {
-            'rollingUsage': r'rollingUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:(\d+)\}',
-            'weeklyUsage': r'weeklyUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:(\d+)\}',
-            'monthlyUsage': r'monthlyUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:(\d+)\}'
+            'rollingUsage': r'rollingUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:([\d.]+)',
+            'weeklyUsage': r'weeklyUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:([\d.]+)',
+            'monthlyUsage': r'monthlyUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:([\d.]+)'
         }
         
         for key, pattern in patterns.items():
@@ -115,7 +116,7 @@ class ApiClient:
             if match:
                 status = match.group(1)
                 reset_sec = int(match.group(2))
-                percent = int(match.group(3))
+                percent = float(match.group(3))
                 
                 result[key] = {
                     'percent': percent,

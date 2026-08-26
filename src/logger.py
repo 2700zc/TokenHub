@@ -80,7 +80,7 @@ def log_api_response(status_code: int, data: dict):
     # Log usage data
     for key in ['rollingUsage', 'weeklyUsage', 'monthlyUsage']:
         usage = data.get(key, {})
-        percent = usage.get('usagePercent', 'N/A')
+        percent = usage.get('percent', 'N/A')
         reset_time = usage.get('reset_time', 'N/A')
         logger.info(f"  {key}: {percent}% | {reset_time}")
 
