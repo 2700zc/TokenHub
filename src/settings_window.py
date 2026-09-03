@@ -9,6 +9,7 @@ from typing import Callable, Optional
 import re
 import urllib.parse
 from .config import Config
+from .app_icon import get_app_icon, set_window_icon
 
 
 def parse_curl_text(text: str) -> dict:
@@ -51,7 +52,7 @@ class SettingsWindow:
     """Settings window for configuring Workspace ID and Cookie."""
     
     WINDOW_WIDTH = 520
-    WINDOW_HEIGHT = 580
+    WINDOW_HEIGHT = 760
     
     def __init__(self, root: tk.Tk, config: Config, theme_colors: dict,
                  on_save: Optional[Callable] = None):
@@ -70,6 +71,7 @@ class SettingsWindow:
         self.window = tk.Toplevel(self.root)
         self.window.title("TokenHub 设置")
         self.window.resizable(False, False)
+        set_window_icon(self.window.winfo_id(), get_app_icon(32))
         
         # Center the window
         self._center_window()
@@ -83,6 +85,25 @@ class SettingsWindow:
         # Create main frame
         main_frame = tk.Frame(self.window, bg=bg, padx=20, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # OpenCode display switch (top)
+        opencode_frame = tk.Frame(main_frame, bg=bg)
+        opencode_frame.pack(fill=tk.X, pady=10)
+        
+        self.opencode_var = tk.BooleanVar(value=self.config.opencode_enabled)
+        opencode_check = tk.Checkbutton(opencode_frame, text="显示 OpenCode 用量",
+                                        variable=self.opencode_var,
+                                        font=('Microsoft YaHei', 10, 'bold'),
+                                        bg=bg, fg=fg,
+                                        activebackground=bg, activeforeground=fg,
+                                        selectcolor=bg,
+                                        command=self._on_opencode_toggle)
+        opencode_check.pack(anchor=tk.W)
+        
+        opencode_hint = tk.Label(opencode_frame, text="开启后显示滚动/每周/每月用量三列",
+                                 font=('Microsoft YaHei', 8),
+                                 bg=bg, fg=accent)
+        opencode_hint.pack(anchor=tk.W)
         
         # Workspace ID section
         ws_frame = tk.Frame(main_frame, bg=bg)
@@ -186,6 +207,47 @@ class SettingsWindow:
                               command=self._reset)
         reset_btn.pack(side=tk.LEFT)
         
+        # DeepSeek section
+        deepseek_frame = tk.Frame(main_frame, bg=bg)
+        deepseek_frame.pack(fill=tk.X, pady=10)
+        
+        self.deepseek_var = tk.BooleanVar(value=self.config.deepseek_enabled)
+        deepseek_check = tk.Checkbutton(deepseek_frame, text="显示 DeepSeek 余额",
+                                        variable=self.deepseek_var,
+                                        font=('Microsoft YaHei', 10),
+                                        bg=bg, fg=fg,
+                                        activebackground=bg, activeforeground=fg,
+                                        selectcolor=bg,
+                                        command=self._on_deepseek_toggle)
+        deepseek_check.pack(anchor=tk.W)
+        
+        ds_token_frame = tk.Frame(deepseek_frame, bg=bg)
+        ds_token_frame.pack(fill=tk.X, pady=(6, 0))
+        
+        ds_token_label = tk.Label(ds_token_frame, text="DeepSeek Token (Bearer):",
+                                  font=('Microsoft YaHei', 10),
+                                  bg=bg, fg=fg)
+        ds_token_label.pack(anchor=tk.W)
+        
+        self.deepseek_token_entry = tk.Entry(ds_token_frame, width=50,
+                                             font=('Microsoft YaHei', 10),
+                                             bg='#ffffff' if not self.theme_colors.get('is_dark', False) else '#2d2d2d',
+                                             fg='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff',
+                                             insertbackground='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff')
+        self.deepseek_token_entry.pack(fill=tk.X, pady=5)
+        self.deepseek_token_entry.insert(0, self.config.deepseek_token)
+        
+        ds_token_hint = tk.Label(ds_token_frame, text="从 DeepSeek 开放平台（platform.deepseek.com）复制 Token，可含 Bearer 前缀",
+                                 font=('Microsoft YaHei', 8),
+                                 bg=bg, fg=accent)
+        ds_token_hint.pack(anchor=tk.W)
+        
+        if not self.deepseek_var.get():
+            self.deepseek_token_entry.config(state='disabled')
+        
+        # Apply OpenCode input enable/disable state
+        self._apply_opencode_state()
+        
         # Buttons frame
         btn_frame = tk.Frame(main_frame, bg=bg)
         btn_frame.pack(fill=tk.X, pady=15)
@@ -230,29 +292,66 @@ class SettingsWindow:
         y = (screen_height - self.WINDOW_HEIGHT) // 2
         self.window.geometry(f"{self.WINDOW_WIDTH}x{self.WINDOW_HEIGHT}+{x}+{y}")
     
+    def _on_deepseek_toggle(self):
+        """Enable/disable the DeepSeek token input based on checkbox state."""
+        if self.deepseek_var.get():
+            self.deepseek_token_entry.config(state='normal')
+            self.deepseek_token_entry.focus_set()
+        else:
+            self.deepseek_token_entry.config(state='disabled')
+    
+    def _on_opencode_toggle(self):
+        """Enable/disable the OpenCode input fields based on checkbox state."""
+        self._apply_opencode_state()
+        if self.opencode_var.get():
+            self.ws_entry.focus_set()
+    
+    def _apply_opencode_state(self):
+        """Apply enabled/disabled state to the OpenCode input fields."""
+        state = 'normal' if self.opencode_var.get() else 'disabled'
+        self.ws_entry.config(state=state)
+        self.cookie_text.config(state=state)
+        self.server_entry.config(state=state)
+    
     def _save(self):
         """Save settings and close window."""
         workspace_id = self.ws_entry.get().strip()
         cookie = self.cookie_text.get('1.0', tk.END).strip()
         server_id = self.server_entry.get().strip()
+        opencode_enabled = self.opencode_var.get()
+        deepseek_enabled = self.deepseek_var.get()
+        deepseek_token = self.deepseek_token_entry.get().strip()
         
-        # Validate inputs (basic check)
-        if not workspace_id:
-            messagebox.showwarning("警告", "请输入 Workspace ID")
+        # Validate OpenCode inputs only when OpenCode display is enabled
+        if opencode_enabled:
+            if not workspace_id:
+                messagebox.showwarning("警告", "请输入 Workspace ID")
+                return
+            
+            if not cookie:
+                messagebox.showwarning("警告", "请输入 Cookie")
+                return
+            
+            if not server_id:
+                messagebox.showwarning("警告", "请输入 Server ID")
+                return
+        
+        # Validate DeepSeek token only when DeepSeek display is enabled
+        if deepseek_enabled and not deepseek_token:
+            messagebox.showwarning("警告", "启用 DeepSeek 余额显示需要填写 Token")
             return
         
-        if not cookie:
-            messagebox.showwarning("警告", "请输入 Cookie")
-            return
-        
-        if not server_id:
-            messagebox.showwarning("警告", "请输入 Server ID")
-            return
+        # Strip "Bearer " prefix if user pasted the full header value
+        if deepseek_token.lower().startswith('bearer '):
+            deepseek_token = deepseek_token[7:].strip()
         
         # Save to config
         self.config.workspace_id = workspace_id
         self.config.cookie = cookie
         self.config.server_id = server_id
+        self.config.opencode_enabled = opencode_enabled
+        self.config.deepseek_enabled = deepseek_enabled
+        self.config.deepseek_token = deepseek_token if deepseek_enabled else ""
         self.config.save()
         
         # Call on_save callback if provided
@@ -270,9 +369,14 @@ class SettingsWindow:
     
     def _reset(self):
         """Clear all input fields."""
+        self.opencode_var.set(True)
+        self._apply_opencode_state()
         self.ws_entry.delete(0, tk.END)
         self.cookie_text.delete('1.0', tk.END)
         self.server_entry.delete(0, tk.END)
+        self.deepseek_var.set(False)
+        self.deepseek_token_entry.delete(0, tk.END)
+        self.deepseek_token_entry.config(state='disabled')
 
     def _show_curl_import_dialog(self):
         """Show a dialog for pasting curl command and auto-filling fields."""

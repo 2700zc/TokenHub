@@ -88,6 +88,13 @@ def log_api_error(error: str):
     """Log API error."""
     logger.error(f"API 请求失败: {error}")
 
+def log_deepseek_balance(balance: dict):
+    """Log DeepSeek account balance."""
+    if balance is None:
+        logger.warning("DeepSeek 余额: 无法获取")
+    else:
+        logger.info(f"DeepSeek 余额: {balance.get('currency', 'CNY')} {balance.get('balance', '--')}")
+
 def log_data_update(error_state: bool = False):
     """Log data update event."""
     if error_state:

@@ -10,6 +10,11 @@ import queue
 from ctypes import wintypes
 from typing import Callable, Optional, Dict
 
+try:
+    from .app_icon import get_app_icon
+except ImportError:
+    from app_icon import get_app_icon
+
 # Windows API constants
 NIM_ADD = 0x00000000
 NIM_MODIFY = 0x00000001
@@ -182,7 +187,9 @@ class TrayIcon:
         icon_data.uCallbackMessage = WM_TRAY_CALLBACK
         
         # Use default application icon
-        icon_data.hIcon = user32.LoadIconW(0, IDI_APPLICATION)
+        icon_data.hIcon = get_app_icon(32)
+        if not icon_data.hIcon:
+            icon_data.hIcon = user32.LoadIconW(0, IDI_APPLICATION)
         
         # Tooltip text
         icon_data.szTip = "TokenHub - OpenCode.ai 用量监控"

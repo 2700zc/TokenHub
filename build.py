@@ -17,6 +17,7 @@ def build():
         '--onefile',
         '--noconsole',
         '--name', 'TokenHub',
+        '--icon', 'icon.ico',
         '--clean',
         'src/main.py'
     ], check=True)

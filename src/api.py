@@ -21,6 +21,9 @@ class ApiClient:
     BASE_URL = "https://opencode.ai/_server"
     TIMEOUT = 10
     
+    DEEPSEEK_BALANCE_URL = "https://platform.deepseek.com/api/v0/users/get_user_summary"
+    DEEPSEEK_TIMEOUT = 10
+    
     def __init__(self, server_id: str = ""):
         """Initialize API client with server ID from config."""
         self.server_id = server_id
@@ -170,3 +173,81 @@ class ApiClient:
             return f"{days}天{hours}小时{minutes}分后重置"
         else:
             return f"{hours}小时{minutes}分后重置"
+    
+    def fetch_deepseek_balance(self, token: str, callback: Callable[[Dict], None]):
+        """Fetch DeepSeek account balance asynchronously in a background thread."""
+        def _fetch():
+            try:
+                headers = {
+                    'Accept': '*/*',
+                    'Authorization': f'Bearer {token}',
+                    'X-Client-Bundle-Id': 'com.deepseek.chat',
+                    'X-Client-Locale': 'zh_CN',
+                    'X-Client-Platform': 'web',
+                    'X-Client-Timezone-Offset': '28800',
+                    'X-Client-Version': '1.0.0',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                req = urllib.request.Request(self.DEEPSEEK_BALANCE_URL, headers=headers)
+                log_api_request(self.DEEPSEEK_BALANCE_URL)
+                
+                with urllib.request.urlopen(req, timeout=self.DEEPSEEK_TIMEOUT) as resp:
+                    status_code = resp.getcode()
+                    raw_data = resp.read().decode('utf-8')
+                    data = json.loads(raw_data)
+                    result = self.parse_deepseek_balance(data)
+                    
+                    log_api_response(status_code, result)
+                    callback(result)
+            except urllib.error.HTTPError as e:
+                error_msg = f"HTTP {e.code}: {e.reason}"
+                log_api_error(error_msg)
+                callback({'deepseek_error': error_msg})
+            except urllib.error.URLError as e:
+                error_msg = f"网络错误: {e.reason}"
+                log_api_error(error_msg)
+                callback({'deepseek_error': error_msg})
+            except Exception as e:
+                error_msg = str(e)
+                log_api_error(error_msg)
+                callback({'deepseek_error': error_msg})
+        
+        thread = threading.Thread(target=_fetch, daemon=True)
+        thread.start()
+        return thread
+    
+    def parse_deepseek_balance(self, data: Any) -> Dict:
+        """Parse DeepSeek get_user_summary response into balance data.
+        
+        Expected structure:
+        {"code":0,"msg":"","data":{"biz_data":{"normal_wallets":[
+            {"currency":"USD","balance":"0E-16","token_estimation":"0"},
+            {"currency":"CNY","balance":"51.76","token_estimation":"0"}],
+            "total_costs":[{"currency":"CNY","amount":"53.24"}]}}}
+        """
+        if data.get('code') != 0:
+            return {'deepseek_error': f"接口返回错误: {data.get('msg', '未知错误')}"}
+        
+        biz_data = (data.get('data') or {}).get('biz_data') or {}
+        wallets = biz_data.get('normal_wallets') or []
+        
+        balance = None
+        currency = None
+        for wallet in wallets:
+            if wallet.get('currency') == 'CNY':
+                balance = wallet.get('balance')
+                currency = 'CNY'
+                break
+        if balance is None and wallets:
+            balance = wallets[0].get('balance')
+            currency = wallets[0].get('currency')
+        
+        if balance is None:
+            return {'deepseek_error': '响应中未找到余额数据'}
+        
+        try:
+            balance_num = float(balance)
+        except (TypeError, ValueError):
+            return {'deepseek_error': f"余额格式异常: {balance}"}
+        
+        return {'deepseek_balance': {'balance': balance_num, 'currency': currency or 'CNY'}}

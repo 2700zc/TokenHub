@@ -38,6 +38,9 @@ class Config:
         self.workspace_id = ""
         self.cookie = ""
         self.server_id = ""
+        self.opencode_enabled = True
+        self.deepseek_enabled = False
+        self.deepseek_token = ""
         self.load()
         log_config_load(self.workspace_id, bool(self.cookie))
     
@@ -53,11 +56,17 @@ class Config:
                 self.workspace_id = data.get('workspace_id', '')
                 self.cookie = data.get('cookie', '')
                 self.server_id = data.get('server_id', '')
+                self.opencode_enabled = data.get('opencode_enabled', True)
+                self.deepseek_enabled = data.get('deepseek_enabled', False)
+                self.deepseek_token = data.get('deepseek_token', '')
         except (json.JSONDecodeError, Exception):
             # Corrupted file - reset to default
             self.workspace_id = ""
             self.cookie = ""
             self.server_id = ""
+            self.opencode_enabled = True
+            self.deepseek_enabled = False
+            self.deepseek_token = ""
             self.save()
     
     def save(self):
@@ -65,7 +74,10 @@ class Config:
         data = {
             'workspace_id': self.workspace_id,
             'cookie': self.cookie,
-            'server_id': self.server_id
+            'server_id': self.server_id,
+            'opencode_enabled': self.opencode_enabled,
+            'deepseek_enabled': self.deepseek_enabled,
+            'deepseek_token': self.deepseek_token
         }
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -74,3 +86,7 @@ class Config:
     def is_valid(self):
         """Check if configuration has valid values."""
         return bool(self.workspace_id and self.cookie and self.server_id)
+    
+    def deepseek_is_valid(self):
+        """Check if DeepSeek balance display is enabled and has a token."""
+        return self.deepseek_enabled and bool(self.deepseek_token)

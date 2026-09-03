@@ -26,7 +26,7 @@ if __name__ == '__main__' and __package__ is None:
     from src.settings_window import SettingsWindow
     from src.help_window import HelpWindow
     from src.tray import TrayIcon
-    from src.logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception
+    from src.logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception, log_deepseek_balance
 else:
     from .config import Config
     from .api import ApiClient
@@ -35,7 +35,7 @@ else:
     from .settings_window import SettingsWindow
     from .help_window import HelpWindow
     from .tray import TrayIcon
-    from .logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception
+    from .logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception, log_deepseek_balance
 
 
 class TokenHubApp:
@@ -112,8 +112,10 @@ class TokenHubApp:
             on_settings=self._show_settings,
             on_help=self._show_help,
             on_exit=self._exit,
-            on_refresh=self._fetch_data
+            on_refresh=self._fetch_data,
+            refresh_seconds=self.REFRESH_INTERVAL
         )
+        self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled)
         
         # Create settings window (lazy - created on demand)
         self.settings_window = SettingsWindow(
@@ -137,15 +139,12 @@ class TokenHubApp:
         # Show initial state
         self.floating_window.update_data({'error': '等待配置'})
         
-        # Check if server_id is configured
-        if not self.config.server_id:
+        # Check if server_id is configured (only relevant when OpenCode display is on)
+        if self.config.opencode_enabled and not self.config.server_id:
             self.floating_window.update_data({'error': '请配置 Server ID'})
             logger.warning("Server ID 未配置，请在 config.json 中设置 server_id 字段")
-        # If config is valid, fetch data immediately
-        elif self.config.is_valid():
-            self._fetch_data()
         else:
-            self.floating_window.update_data({'error': '请先配置'})
+            self._fetch_data()
     
     def _show_settings(self):
         """Show settings window."""
@@ -165,6 +164,8 @@ class TokenHubApp:
         logger.info("配置已保存，准备获取数据...")
         # Update API client with new server_id
         self.api.server_id = self.config.server_id
+        # Apply column visibility
+        self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled)
         # Fetch data immediately after config is saved
         if self.config.is_valid():
             logger.info("配置有效，开始获取 API 数据")
@@ -174,21 +175,28 @@ class TokenHubApp:
     
     def _fetch_data(self):
         """Fetch usage data from API."""
-        if not self.config.is_valid():
-            logger.warning("配置无效，跳过数据获取")
-            self.floating_window.update_data({'error': '请先配置'})
-            return
-        
-        logger.info("开始获取 API 数据...")
-        
         def callback(result):
             # Put result in queue for main thread processing
             self.data_queue.put(result)
         
-        try:
-            self.api.fetch(self.config.workspace_id, self.config.cookie, callback)
-        except Exception as e:
-            log_exception("API 请求", e)
+        # Fetch OpenCode.ai usage data
+        if self.config.opencode_enabled and self.config.is_valid():
+            logger.info("开始获取 API 数据...")
+            try:
+                self.api.fetch(self.config.workspace_id, self.config.cookie, callback)
+            except Exception as e:
+                log_exception("API 请求", e)
+        elif self.config.opencode_enabled:
+            logger.warning("OpenCode 配置无效，跳过用量获取")
+            self.floating_window.update_data({'error': '请先配置'})
+        
+        # Fetch DeepSeek balance (independent of OpenCode config)
+        if self.config.deepseek_is_valid():
+            logger.info("开始获取 DeepSeek 余额...")
+            try:
+                self.api.fetch_deepseek_balance(self.config.deepseek_token, callback)
+            except Exception as e:
+                log_exception("DeepSeek 余额请求", e)
     
     def _process_data_queue(self):
         """Process data from queue (called from main thread)."""
@@ -198,6 +206,10 @@ class TokenHubApp:
                 if 'error' in data:
                     log_data_update(error_state=True)
                     logger.error(f"数据更新失败: {data['error']}")
+                elif 'deepseek_error' in data:
+                    logger.error(f"DeepSeek 余额更新失败: {data['deepseek_error']}")
+                elif 'deepseek_balance' in data:
+                    log_deepseek_balance(data['deepseek_balance'])
                 else:
                     log_data_update(error_state=False)
                 self.floating_window.update_data(data)

@@ -7,6 +7,11 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional
 
+try:
+    from .app_icon import get_app_icon, set_window_icon
+except ImportError:
+    from app_icon import get_app_icon, set_window_icon
+
 # Help content (from requirements document)
 HELP_CONTENT = """
 第一步：登录并获取 Workspace ID
@@ -69,6 +74,42 @@ HELP_CONTENT = """
 3. 将第二步中复制的 Server ID 粘贴到软件的 Server ID 输入框中。
 
 4. 检查无误后，点击"保存"按钮即可。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+第四步：显示列开关（可选）
+
+在设置窗口中可以分别控制悬浮窗显示哪些列：
+
+1. 显示 OpenCode 用量：勾选后显示「滚动用量 / 每周用量 / 每月用量」三列，默认开启。
+
+2. 显示 DeepSeek 余额：勾选后显示第四列「DeepSeek 余额」。
+
+3. 组合效果：
+   ◦ OpenCode 开启 + DeepSeek 开启：共 4 列（三列用量 + DeepSeek 余额）
+   ◦ 仅 OpenCode 开启：3 列（用量）
+   ◦ 仅 DeepSeek 开启：1 列（余额）
+   ◦ 两者都关闭：悬浮窗不显示任何数据列
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+第五步：获取 DeepSeek Token（可选，仅显示余额时需要）
+
+1. 打开 DeepSeek 开放平台：在浏览器中访问 https://platform.deepseek.com 并登录。
+
+2. 获取 Token：进入「API Keys」或账户相关页面，复制您的开发者 Token。
+   ◦ 说明：需要的是平台网站的 Bearer Token（authorization 中 Bearer 后的那串字符），不是以 sk- 开头的 API Key。
+
+3. 在本软件中配置：
+   ◦ 右键悬浮窗，点击「设置」。
+   ◦ 勾选「显示 DeepSeek 余额」，输入框变为可编辑。
+   ◦ 将复制的 Token 粘贴到「DeepSeek Token (Bearer)」输入框中（可连同 Bearer 前缀一起粘贴，软件会自动处理）。
+   ◦ 点击「保存」。
+
+4. 保存后悬浮窗将显示 DeepSeek 账户余额（人民币金额，如 ¥51.76）。
+   ◦ 余额每 60 秒自动刷新一次，将鼠标移到悬浮窗上也可手动触发刷新。
+
+⚠️ 注意：Token 是您的账户凭证，请勿泄露给他人。软件将 Token 保存在本地 config.json 文件中。
 """
 
 class HelpWindow:
@@ -91,6 +132,7 @@ class HelpWindow:
         self.window = tk.Toplevel(self.root)
         self.window.title("TokenHub 使用帮助")
         self.window.resizable(True, True)
+        set_window_icon(self.window.winfo_id(), get_app_icon(32))
         
         # Center the window
         self._center_window()
