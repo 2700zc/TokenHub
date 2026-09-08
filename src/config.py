@@ -41,6 +41,8 @@ class Config:
         self.opencode_enabled = True
         self.deepseek_enabled = False
         self.deepseek_token = ""
+        self.commandcode_enabled = False
+        self.commandcode_cookie = ""
         self.load()
         log_config_load(self.workspace_id, bool(self.cookie))
     
@@ -59,6 +61,8 @@ class Config:
                 self.opencode_enabled = data.get('opencode_enabled', True)
                 self.deepseek_enabled = data.get('deepseek_enabled', False)
                 self.deepseek_token = data.get('deepseek_token', '')
+                self.commandcode_enabled = data.get('commandcode_enabled', False)
+                self.commandcode_cookie = data.get('commandcode_cookie', '')
         except (json.JSONDecodeError, Exception):
             # Corrupted file - reset to default
             self.workspace_id = ""
@@ -67,6 +71,8 @@ class Config:
             self.opencode_enabled = True
             self.deepseek_enabled = False
             self.deepseek_token = ""
+            self.commandcode_enabled = False
+            self.commandcode_cookie = ""
             self.save()
     
     def save(self):
@@ -77,7 +83,9 @@ class Config:
             'server_id': self.server_id,
             'opencode_enabled': self.opencode_enabled,
             'deepseek_enabled': self.deepseek_enabled,
-            'deepseek_token': self.deepseek_token
+            'deepseek_token': self.deepseek_token,
+            'commandcode_enabled': self.commandcode_enabled,
+            'commandcode_cookie': self.commandcode_cookie
         }
         with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -90,3 +98,7 @@ class Config:
     def deepseek_is_valid(self):
         """Check if DeepSeek balance display is enabled and has a token."""
         return self.deepseek_enabled and bool(self.deepseek_token)
+
+    def commandcode_is_valid(self):
+        """Check if CommandCode usage display is enabled and has a token."""
+        return self.commandcode_enabled and bool(self.commandcode_cookie)

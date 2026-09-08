@@ -77,19 +77,23 @@ HELP_CONTENT = """
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-第四步：显示列开关（可选）
+第四步：显示开关（可选）
 
-在设置窗口中可以分别控制悬浮窗显示哪些列：
+在设置窗口中可以分别控制悬浮窗显示哪些数据源，每个数据源以「厂商块」纵向堆叠显示（宽度固定，高度随开启的数据源自动增减）：
 
-1. 显示 OpenCode 用量：勾选后显示「滚动用量 / 每周用量 / 每月用量」三列，默认开启。
+1. 显示 OpenCode 用量：开启后顶部显示一块「OpenCode Go」，内含 滚动用量 / 每周用量 / 每月用量 及其重置时间。
 
-2. 显示 DeepSeek 余额：勾选后显示第四列「DeepSeek 余额」。
+2. 显示 CommandCode 用量：开启后新增一块「CommandCode」，显示其 5小时（滚动）/ 每周 / 每月 用量及重置时间。
 
-3. 组合效果：
-   ◦ OpenCode 开启 + DeepSeek 开启：共 4 列（三列用量 + DeepSeek 余额）
-   ◦ 仅 OpenCode 开启：3 列（用量）
-   ◦ 仅 DeepSeek 开启：1 列（余额）
-   ◦ 两者都关闭：悬浮窗不显示任何数据列
+3. 显示 DeepSeek 余额：开启后新增一块「DeepSeek」，显示账户余额及刷新周期。
+
+4. 组合效果：
+   ◦ OpenCode + CommandCode + DeepSeek 全开：三块纵向排列
+   ◦ 仅 OpenCode：一块
+   ◦ 仅 DeepSeek：一块（只显示余额）
+   ◦ 全部关闭：悬浮窗仅剩一个小空白条（可从托盘菜单操作）
+
+悬浮窗默认停靠在屏幕顶部，靠近屏幕边缘会自动隐藏（露出 3px 边条），鼠标移入即展开；可拖拽到任意位置。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -110,6 +114,32 @@ HELP_CONTENT = """
    ◦ 余额每 60 秒自动刷新一次，将鼠标移到悬浮窗上也可手动触发刷新。
 
 ⚠️ 注意：Token 是您的账户凭证，请勿泄露给他人。软件将 Token 保存在本地 config.json 文件中。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+第六步：获取 CommandCode Session Token（可选，仅显示 CommandCode 用量时需要）
+
+1. 登录并打开 CommandCode 用量页：在浏览器中登录 https://commandcode.ai ，打开「Usage / 用量」页面（设置中的 Usage）。
+
+2. 获取 Session Token：
+   ◦ 按 F12 打开开发者工具，切换到 Network 标签。
+   ◦ 刷新页面，在请求列表中找到任意 internal 接口请求（例如 internal/usage/summary 或 internal/billing/credits）。
+   ◦ 点击该请求，在 Headers 中找到 Cookie 项，里面包含 __Secure-commandcode_prod_.session_token=xxx 这一段。
+   ◦ 最简单的方式：在 Network 中右键该请求 → Copy → Copy as cURL，把整段 curl 复制下来。
+
+3. 在本软件中配置：
+   ◦ 右键悬浮窗，点击「设置」。
+   ◦ 勾选「显示 CommandCode 用量」，输入框变为可编辑。
+   ◦ 点击「从curl导入」，把刚才复制的 curl（或整段 Cookie）粘贴进去，点击「解析并填入」，软件会自动提取 session_token。
+   ◦ 也可以直接把 session_token 的值粘贴到输入框。点击「保存」。
+
+4. 保存后悬浮窗将新增一块「CommandCode」，显示三组用量（标题沿用 滚动用量 / 每周用量 / 每月用量）：
+   ◦ 滚动用量 = 5 小时滚动窗口用量百分比（如 0.19%）
+   ◦ 每周用量 = 一周用量百分比（如 0.33%）
+   ◦ 每月用量 = 本月额度用量百分比
+   ◦ 每组下方显示距离重置的时间（5 小时/每周窗口与月额度结算日均按服务器时间倒计时）。
+
+⚠️ 注意：Session Token 是您的账户凭证，请勿泄露给他人。软件将 Token 保存在本地 config.json 文件中。
 """
 
 class HelpWindow:

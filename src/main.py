@@ -26,7 +26,7 @@ if __name__ == '__main__' and __package__ is None:
     from src.settings_window import SettingsWindow
     from src.help_window import HelpWindow
     from src.tray import TrayIcon
-    from src.logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception, log_deepseek_balance
+    from src.logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception, log_deepseek, log_commandcode
 else:
     from .config import Config
     from .api import ApiClient
@@ -35,7 +35,7 @@ else:
     from .settings_window import SettingsWindow
     from .help_window import HelpWindow
     from .tray import TrayIcon
-    from .logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception, log_deepseek_balance
+    from .logger import logger, log_startup, log_single_instance_blocked, log_refresh_triggered, log_ui_action, log_data_update, log_exception, log_deepseek, log_commandcode
 
 
 class TokenHubApp:
@@ -115,7 +115,7 @@ class TokenHubApp:
             on_refresh=self._fetch_data,
             refresh_seconds=self.REFRESH_INTERVAL
         )
-        self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled)
+        self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled, self.config.commandcode_enabled)
         
         # Create settings window (lazy - created on demand)
         self.settings_window = SettingsWindow(
@@ -165,7 +165,7 @@ class TokenHubApp:
         # Update API client with new server_id
         self.api.server_id = self.config.server_id
         # Apply column visibility
-        self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled)
+        self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled, self.config.commandcode_enabled)
         # Fetch data immediately after config is saved
         if self.config.is_valid():
             logger.info("配置有效，开始获取 API 数据")
@@ -190,13 +190,23 @@ class TokenHubApp:
             logger.warning("OpenCode 配置无效，跳过用量获取")
             self.floating_window.update_data({'error': '请先配置'})
         
-        # Fetch DeepSeek balance (independent of OpenCode config)
-        if self.config.deepseek_is_valid():
-            logger.info("开始获取 DeepSeek 余额...")
+        # Fetch CommandCode usage (independent of OpenCode config)
+        if self.config.commandcode_is_valid():
+            logger.info("开始获取 CommandCode 用量...")
             try:
-                self.api.fetch_deepseek_balance(self.config.deepseek_token, callback)
+                self.api.fetch_commandcode(self.config.commandcode_cookie, callback)
             except Exception as e:
-                log_exception("DeepSeek 余额请求", e)
+                log_exception("CommandCode 请求", e)
+        elif self.config.commandcode_enabled:
+            logger.warning("CommandCode 未配置 token，跳过用量获取")
+
+        # Fetch DeepSeek balance + today's usage (independent of OpenCode config)
+        if self.config.deepseek_is_valid():
+            logger.info("开始获取 DeepSeek 余额与今日用量...")
+            try:
+                self.api.fetch_deepseek(self.config.deepseek_token, callback)
+            except Exception as e:
+                log_exception("DeepSeek 请求", e)
     
     def _process_data_queue(self):
         """Process data from queue (called from main thread)."""
@@ -206,10 +216,17 @@ class TokenHubApp:
                 if 'error' in data:
                     log_data_update(error_state=True)
                     logger.error(f"数据更新失败: {data['error']}")
+                elif 'cc_error' in data:
+                    log_data_update(error_state=True)
+                    logger.error(f"CommandCode 用量更新失败: {data['cc_error']}")
+                elif 'cc' in data:
+                    log_data_update(error_state=False)
+                    log_commandcode(data['cc'])
                 elif 'deepseek_error' in data:
-                    logger.error(f"DeepSeek 余额更新失败: {data['deepseek_error']}")
-                elif 'deepseek_balance' in data:
-                    log_deepseek_balance(data['deepseek_balance'])
+                    logger.error(f"DeepSeek 数据更新失败: {data['deepseek_error']}")
+                elif 'deepseek' in data:
+                    log_data_update(error_state=False)
+                    log_deepseek(data['deepseek'])
                 else:
                     log_data_update(error_state=False)
                 self.floating_window.update_data(data)

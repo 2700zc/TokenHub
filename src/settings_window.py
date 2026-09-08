@@ -11,6 +11,11 @@ import urllib.parse
 from .config import Config
 from .app_icon import get_app_icon, set_window_icon
 
+try:
+    from .api import extract_commandcode_token
+except ImportError:
+    from api import extract_commandcode_token
+
 
 def parse_curl_text(text: str) -> dict:
     """Parse curl command text to extract workspace_id, cookie, server_id."""
@@ -82,9 +87,29 @@ class SettingsWindow:
         accent = self.theme_colors['accent']
         self.window.configure(bg=bg)
         
-        # Create main frame
-        main_frame = tk.Frame(self.window, bg=bg, padx=20, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # Outer container (form scrolls, buttons stay pinned at the bottom)
+        container = tk.Frame(self.window, bg=bg)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        btn_frame = tk.Frame(container, bg=bg)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 14))
+        
+        self._canvas = tk.Canvas(container, bg=bg, highlightthickness=0, bd=0)
+        scrollbar = tk.Scrollbar(container, orient=tk.VERTICAL,
+                                 command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        main_frame = tk.Frame(self._canvas, bg=bg, padx=20, pady=16)
+        self._canvas_window = self._canvas.create_window(
+            (0, 0), window=main_frame, anchor='nw')
+        main_frame.bind('<Configure>', self._on_form_configure)
+        self._canvas.bind('<Configure>', self._on_canvas_configure)
+        self.window.bind('<MouseWheel>', self._on_mousewheel)
+        
+        entry_bg = '#ffffff' if not self.theme_colors.get('is_dark', False) else '#2d2d2d'
+        entry_fg = '#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff'
         
         # OpenCode display switch (top)
         opencode_frame = tk.Frame(main_frame, bg=bg)
@@ -207,6 +232,62 @@ class SettingsWindow:
                               command=self._reset)
         reset_btn.pack(side=tk.LEFT)
         
+        # CommandCode section
+        cc_frame = tk.Frame(main_frame, bg=bg)
+        cc_frame.pack(fill=tk.X, pady=10)
+        
+        self.commandcode_var = tk.BooleanVar(value=self.config.commandcode_enabled)
+        cc_check = tk.Checkbutton(cc_frame, text="显示 CommandCode 用量",
+                                   variable=self.commandcode_var,
+                                   font=('Microsoft YaHei', 10, 'bold'),
+                                   bg=bg, fg=fg,
+                                   activebackground=bg, activeforeground=fg,
+                                   selectcolor=bg,
+                                   command=self._on_commandcode_toggle)
+        cc_check.pack(anchor=tk.W)
+        
+        cc_hint = tk.Label(cc_frame, text="开启后显示 CommandCode 的 5小时/每周/每月用量（CC 前缀三列）",
+                           font=('Microsoft YaHei', 8),
+                           bg=bg, fg=accent)
+        cc_hint.pack(anchor=tk.W)
+        
+        cc_token_frame = tk.Frame(cc_frame, bg=bg)
+        cc_token_frame.pack(fill=tk.X, pady=(6, 0))
+        
+        cc_token_label = tk.Label(cc_token_frame, text="CommandCode Session Token:",
+                                  font=('Microsoft YaHei', 10),
+                                  bg=bg, fg=fg)
+        cc_token_label.pack(anchor=tk.W)
+        
+        self.commandcode_entry = tk.Entry(cc_token_frame, width=50,
+                                          font=('Microsoft YaHei', 10),
+                                          bg=entry_bg, fg=entry_fg,
+                                          insertbackground=entry_fg)
+        self.commandcode_entry.pack(fill=tk.X, pady=5)
+        self.commandcode_entry.insert(0, self.config.commandcode_cookie)
+        
+        cc_btn_row = tk.Frame(cc_token_frame, bg=bg)
+        cc_btn_row.pack(fill=tk.X, pady=(2, 0))
+        
+        cc_import_btn = tk.Button(cc_btn_row, text="从curl导入",
+                                  font=('Microsoft YaHei', 9),
+                                  bg=btn_bg, fg=btn_fg,
+                                  activebackground=btn_active_bg,
+                                  activeforeground=btn_active_fg,
+                                  relief=tk.RAISED, bd=1,
+                                  command=self._show_commandcode_curl_dialog)
+        cc_import_btn.pack(side=tk.LEFT)
+        
+        cc_token_hint = tk.Label(cc_token_frame,
+                                 text="打开 commandcode.ai 用量页，F12→Network 复制任一 internal 请求的 Cookie，软件自动提取 session_token",
+                                 font=('Microsoft YaHei', 8),
+                                 bg=bg, fg=accent,
+                                 justify=tk.LEFT, wraplength=460)
+        cc_token_hint.pack(anchor=tk.W, pady=(4, 0))
+        
+        if not self.commandcode_var.get():
+            self.commandcode_entry.config(state='disabled')
+        
         # DeepSeek section
         deepseek_frame = tk.Frame(main_frame, bg=bg)
         deepseek_frame.pack(fill=tk.X, pady=10)
@@ -248,10 +329,7 @@ class SettingsWindow:
         # Apply OpenCode input enable/disable state
         self._apply_opencode_state()
         
-        # Buttons frame
-        btn_frame = tk.Frame(main_frame, bg=bg)
-        btn_frame.pack(fill=tk.X, pady=15)
-        
+        # Buttons (pinned at the bottom of the window)
         save_btn = tk.Button(btn_frame, text="保存",
                             font=('Microsoft YaHei', 11, 'bold'),
                             width=12,
@@ -263,7 +341,7 @@ class SettingsWindow:
                             relief=tk.RAISED,
                             bd=2,
                             command=self._save)
-        save_btn.pack(side=tk.LEFT, padx=10, pady=5)
+        save_btn.pack(side=tk.LEFT, padx=6, pady=4)
         
         cancel_btn = tk.Button(btn_frame, text="取消",
                             font=('Microsoft YaHei', 11),
@@ -276,7 +354,7 @@ class SettingsWindow:
                             relief=tk.RAISED,
                             bd=2,
                             command=self._cancel)
-        cancel_btn.pack(side=tk.LEFT, padx=10, pady=5)
+        cancel_btn.pack(side=tk.LEFT, padx=6, pady=4)
         
         # Bind ESC to cancel
         self.window.bind('<Escape>', lambda e: self._cancel())
@@ -291,6 +369,28 @@ class SettingsWindow:
         x = (screen_width - self.WINDOW_WIDTH) // 2
         y = (screen_height - self.WINDOW_HEIGHT) // 2
         self.window.geometry(f"{self.WINDOW_WIDTH}x{self.WINDOW_HEIGHT}+{x}+{y}")
+    
+    def _on_form_configure(self, event):
+        """Update the canvas scroll region when the form size changes."""
+        self._canvas.configure(scrollregion=self._canvas.bbox('all'))
+    
+    def _on_canvas_configure(self, event):
+        """Make the form width follow the canvas width."""
+        if hasattr(self, '_canvas_window'):
+            self._canvas.itemconfigure(self._canvas_window, width=event.width)
+    
+    def _on_mousewheel(self, event):
+        """Scroll the settings form with the mouse wheel."""
+        if hasattr(self, '_canvas'):
+            self._canvas.yview_scroll(int(-event.delta / 120), 'units')
+    
+    def _on_commandcode_toggle(self):
+        """Enable/disable the CommandCode token input based on checkbox state."""
+        if self.commandcode_var.get():
+            self.commandcode_entry.config(state='normal')
+            self.commandcode_entry.focus_set()
+        else:
+            self.commandcode_entry.config(state='disabled')
     
     def _on_deepseek_toggle(self):
         """Enable/disable the DeepSeek token input based on checkbox state."""
@@ -345,6 +445,16 @@ class SettingsWindow:
         if deepseek_token.lower().startswith('bearer '):
             deepseek_token = deepseek_token[7:].strip()
         
+        # CommandCode token: normalize whatever was pasted (cookie/curl/raw)
+        commandcode_enabled = self.commandcode_var.get()
+        commandcode_raw = self.commandcode_entry.get().strip()
+        commandcode_token = extract_commandcode_token(commandcode_raw) if commandcode_raw else ''
+        if commandcode_enabled and not commandcode_token:
+            messagebox.showwarning(
+                "警告",
+                "启用 CommandCode 用量显示需要填写有效的 Session Token\n（可直接粘贴整段 Cookie 或 curl 命令）")
+            return
+        
         # Save to config
         self.config.workspace_id = workspace_id
         self.config.cookie = cookie
@@ -352,6 +462,8 @@ class SettingsWindow:
         self.config.opencode_enabled = opencode_enabled
         self.config.deepseek_enabled = deepseek_enabled
         self.config.deepseek_token = deepseek_token if deepseek_enabled else ""
+        self.config.commandcode_enabled = commandcode_enabled
+        self.config.commandcode_cookie = commandcode_token if commandcode_enabled else ""
         self.config.save()
         
         # Call on_save callback if provided
@@ -374,6 +486,9 @@ class SettingsWindow:
         self.ws_entry.delete(0, tk.END)
         self.cookie_text.delete('1.0', tk.END)
         self.server_entry.delete(0, tk.END)
+        self.commandcode_var.set(False)
+        self.commandcode_entry.delete(0, tk.END)
+        self.commandcode_entry.config(state='disabled')
         self.deepseek_var.set(False)
         self.deepseek_token_entry.delete(0, tk.END)
         self.deepseek_token_entry.config(state='disabled')
@@ -465,6 +580,97 @@ class SettingsWindow:
             btn_fg_d = '#000000'
             btn_active_d = '#0078d4'
             btn_active_fg_d = '#ffffff'
+
+        parse_btn = tk.Button(btn_frame, text="解析并填入",
+                              font=('Microsoft YaHei', 10, 'bold'),
+                              bg=btn_active_d, fg=btn_active_fg_d,
+                              activebackground=btn_active_d,
+                              activeforeground=btn_active_fg_d,
+                              relief=tk.RAISED, bd=2,
+                              command=on_parse)
+        parse_btn.pack(side=tk.LEFT, padx=6)
+
+        cancel_btn = tk.Button(btn_frame, text="取消",
+                               font=('Microsoft YaHei', 10),
+                               bg=btn_bg_d, fg=btn_fg_d,
+                               activebackground='#ff6b6b',
+                               activeforeground='#ffffff',
+                               relief=tk.RAISED, bd=2,
+                               command=on_cancel)
+        cancel_btn.pack(side=tk.LEFT, padx=6)
+
+        dialog.bind('<Escape>', lambda e: on_cancel())
+
+    def _show_commandcode_curl_dialog(self):
+        """Show a dialog for pasting a CommandCode curl/Cookie and auto-filling the token."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("从curl导入 CommandCode")
+        dialog.resizable(False, False)
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        bg = self.theme_colors['bg']
+        fg = self.theme_colors['fg']
+        accent = self.theme_colors['accent']
+        dialog.configure(bg=bg)
+
+        dw = 620
+        dh = 380
+        sw = dialog.winfo_screenwidth()
+        sh = dialog.winfo_screenheight()
+        dialog.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        frame = tk.Frame(dialog, bg=bg, padx=16, pady=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frame, text="粘贴 commandcode 的整段 curl 命令，或整段 Cookie（-b 的内容）：",
+                 font=('Microsoft YaHei', 10), bg=bg, fg=fg,
+                 justify=tk.LEFT, wraplength=580).pack(anchor=tk.W)
+
+        text_widget = tk.Text(frame, width=60, height=10,
+                              font=('Consolas', 9),
+                              bg='#ffffff' if not self.theme_colors.get('is_dark', False) else '#2d2d2d',
+                              fg='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff',
+                              insertbackground='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff',
+                              wrap=tk.WORD)
+        text_widget.pack(fill=tk.BOTH, expand=True, pady=8)
+        text_widget.focus_set()
+
+        def on_parse():
+            raw = text_widget.get('1.0', tk.END).strip()
+            if not raw:
+                messagebox.showwarning("警告", "请先粘贴 curl 或 Cookie", parent=dialog)
+                return
+            token = extract_commandcode_token(raw)
+            if not token:
+                messagebox.showerror(
+                    "无法识别",
+                    "未能从内容中识别出 session_token。\n"
+                    "请确认粘贴的是 commandcode.ai 用量页任一请求的完整 Cookie（包含 "
+                    "__Secure-commandcode_prod_.session_token=...）。",
+                    parent=dialog)
+                return
+            self.commandcode_entry.delete(0, tk.END)
+            self.commandcode_entry.insert(0, token)
+            messagebox.showinfo("导入成功", "已提取 Session Token，请点击「保存」确认。", parent=dialog)
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        if self.theme_colors.get('is_dark', False):
+            btn_bg_d = '#3c3c3c'
+            btn_fg_d = '#ffffff'
+            btn_active_d = '#4fc1ff'
+            btn_active_fg_d = '#000000'
+        else:
+            btn_bg_d = '#e5e5e5'
+            btn_fg_d = '#000000'
+            btn_active_d = '#0078d4'
+            btn_active_fg_d = '#ffffff'
+
+        btn_frame = tk.Frame(frame, bg=bg)
+        btn_frame.pack(fill=tk.X)
 
         parse_btn = tk.Button(btn_frame, text="解析并填入",
                               font=('Microsoft YaHei', 10, 'bold'),

@@ -4,10 +4,13 @@ TokenHub 是一个轻量级的 Windows 桌面悬浮工具，零依赖、开箱�
 
 ## 功能特性
 
-- 📊 显示滚动用量、每周用量、每月用量百分比
+- 📊 显示 OpenCode Go 的滚动用量、每周用量、每月用量百分比
 - ⏱️ 显示各用量周期的重置倒计时
-- 🖱️ 可拖拽悬浮窗到任意位置
-- ⚙️ 配置持久化（Workspace ID、Cookie 和 Server ID）
+- 🖱️ 可拖拽悬浮窗到任意位置（贴边自动隐藏）
+- 🧱 各厂商以「厂商块」纵向堆叠展示（OpenCode Go / CommandCode / DeepSeek）
+- 💰 显示 DeepSeek 账户余额
+- ⌘ 显示 CommandCode 用量（5小时 / 每周 / 每月 + 距离重置时间）
+- ⚙️ 配置持久化（Workspace ID、Cookie、Server ID、各数据源开关与 Token）
 - 📖 内置帮助文档
 - 🔒 单实例运行，防止多开
 
@@ -40,6 +43,16 @@ TokenHub 是一个轻量级的 Windows 桌面悬浮工具，零依赖、开箱�
    - Cookie
    - Server ID（从 X-Server-Id 获取）
 3. 点击"保存"
+
+### 4. （可选）显示 DeepSeek 余额
+
+勾选"显示 DeepSeek 余额"，粘贴 platform.deepseek.com 的 Bearer Token 并保存。
+
+### 5. （可选）显示 CommandCode 用量
+
+勾选"显示 CommandCode 用量"，在 commandcode.ai 用量页 F12 复制任一 internal 请求的 Cookie（或 cURL），点击"从curl导入"自动提取 `__Secure-commandcode_prod_.session_token` 后保存。悬浮窗将新增一块「CommandCode」，显示 5小时 / 每周 / 每月用量百分比及距离重置时间。
+
+每个数据源以「厂商块」纵向堆叠（宽度固定约 760px，高度随数据源数量自动增减），厂商名分别为 OpenCode Go / CommandCode / DeepSeek。
 
 ## 构建
 

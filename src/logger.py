@@ -83,17 +83,43 @@ def log_api_response(status_code: int, data: dict):
         percent = usage.get('percent', 'N/A')
         reset_time = usage.get('reset_time', 'N/A')
         logger.info(f"  {key}: {percent}% | {reset_time}")
+    if 'cc' in data:
+        log_commandcode(data['cc'])
+    if 'deepseek' in data:
+        log_deepseek(data['deepseek'])
 
 def log_api_error(error: str):
     """Log API error."""
     logger.error(f"API 请求失败: {error}")
 
-def log_deepseek_balance(balance: dict):
-    """Log DeepSeek account balance."""
+def log_deepseek(ds: dict):
+    """Log DeepSeek balance + today's usage."""
+    if not isinstance(ds, dict):
+        return
+    balance = ds.get('balance')
+    requests = ds.get('requests')
+    tokens = ds.get('tokens')
     if balance is None:
         logger.warning("DeepSeek 余额: 无法获取")
     else:
-        logger.info(f"DeepSeek 余额: {balance.get('currency', 'CNY')} {balance.get('balance', '--')}")
+        logger.info(f"DeepSeek 余额: {ds.get('currency', 'CNY')} {balance}")
+    if requests is not None:
+        logger.info(f"DeepSeek 今日请求: {requests} 次 | 今日Token: {tokens}")
+
+def log_commandcode(cc: dict):
+    """Log CommandCode usage segments."""
+    if not isinstance(cc, dict):
+        return
+    for key in ['rolling', 'weekly', 'monthly']:
+        seg = cc.get(key, {})
+        status = seg.get('status', 'N/A')
+        percent = seg.get('percent', 'N/A')
+        reset_time = seg.get('reset_time', 'N/A')
+        if percent is None:
+            percent = 'N/A'
+        else:
+            percent = f"{round(percent, 2):g}"
+        logger.info(f"  cc_{key}: {percent}% | {reset_time} | status={status}")
 
 def log_data_update(error_state: bool = False):
     """Log data update event."""

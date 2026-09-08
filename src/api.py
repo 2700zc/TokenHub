@@ -8,12 +8,68 @@ import urllib.parse
 import json
 import threading
 import re
+import time
+from datetime import datetime
 from typing import Dict, Callable, Optional, Any
 
 try:
     from .logger import logger, log_api_request, log_api_response, log_api_error
 except ImportError:
     from logger import logger, log_api_request, log_api_response, log_api_error
+
+COMMANDCODE_TOKEN_COOKIE = '__Secure-commandcode_prod_.session_token'
+
+
+def extract_commandcode_token(raw: str) -> str:
+    """Extract the CommandCode session token from various input formats.
+
+    Accepts:
+      - a full curl command copied from the browser (Windows cmd '^' escapes ok)
+      - a raw Cookie string (the -b "..." value)
+      - the bare session token value itself
+
+    Returns the token verbatim (keeps any URL-encoding, matching how the
+    browser stores/sends the cookie). Returns '' when nothing is found.
+    """
+    if not raw:
+        return ''
+    # Strip Windows cmd line-continuation / escape carets
+    text = re.sub(r'\^[ \t]*\r?\n', '', raw)
+    text = re.sub(r'\^(.)', r'\1', text)
+    # 1) Named cookie inside a full cookie/curl string
+    match = re.search(
+        re.escape(COMMANDCODE_TOKEN_COOKIE) + r'=([^;\s"\']+)', text)
+    if match:
+        return match.group(1).strip()
+    # 2) Looks like a full cookie but that cookie is absent -> cannot recover
+    if re.search(r'[;=]', text):
+        return ''
+    # 3) Possibly a bare token pasted alone (long dot-separated value)
+    match = re.search(r'([A-Za-z0-9_\-~.%]{40,})', text)
+    if match:
+        return match.group(1).strip()
+    return ''
+
+
+def _cc_num(value: Any) -> Optional[float]:
+    """Convert a possibly-string numeric value to float (None-safe)."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cc_parse_iso_timestamp(value: Any) -> Optional[int]:
+    """Parse an ISO-8601 timestamp (e.g. 2026-10-07T13:43:17.000Z) to epoch sec."""
+    if not value:
+        return None
+    try:
+        normalized = str(value).strip().replace('Z', '+00:00')
+        return int(datetime.fromisoformat(normalized).timestamp())
+    except (ValueError, TypeError):
+        return None
 
 class ApiClient:
     """API client for fetching OpenCode.ai usage data."""
@@ -22,7 +78,12 @@ class ApiClient:
     TIMEOUT = 10
     
     DEEPSEEK_BALANCE_URL = "https://platform.deepseek.com/api/v0/users/get_user_summary"
+    DEEPSEEK_USAGE_URL = "https://platform.deepseek.com/api/v0/usage/by_api_key/amount"
     DEEPSEEK_TIMEOUT = 10
+    
+    COMMANDCODE_CREDITS_URL = "https://api.commandcode.ai/internal/billing/credits"
+    COMMANDCODE_SUBSCRIPTIONS_URL = "https://api.commandcode.ai/internal/billing/subscriptions"
+    COMMANDCODE_TIMEOUT = 10
     
     def __init__(self, server_id: str = ""):
         """Initialize API client with server ID from config."""
@@ -251,3 +312,239 @@ class ApiClient:
             return {'deepseek_error': f"余额格式异常: {balance}"}
         
         return {'deepseek_balance': {'balance': balance_num, 'currency': currency or 'CNY'}}
+
+    # ------------------------------------------------------------------
+    # DeepSeek (balance + today's usage)
+    # ------------------------------------------------------------------
+
+    def build_deepseek_headers(self, token: str) -> Dict[str, str]:
+        """Build HTTP headers for DeepSeek platform endpoints."""
+        tz_offset = int(self._local_tz_offset_sec())
+        return {
+            'Accept': '*/*',
+            'Authorization': f'Bearer {token}',
+            'X-Client-Bundle-Id': 'com.deepseek.chat',
+            'X-Client-Locale': 'zh_CN',
+            'X-Client-Platform': 'web',
+            'X-Client-Timezone-Offset': str(tz_offset),
+            'X-Client-Version': '1.0.0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+
+    @staticmethod
+    def _local_tz_offset_sec() -> float:
+        """Return the local timezone offset in seconds (east of UTC)."""
+        offset = datetime.now().astimezone().utcoffset()
+        return offset.total_seconds() if offset else 0.0
+
+    @staticmethod
+    def _deepseek_today_range():
+        """Return the (start_sec, end_sec) of the full current local day.
+
+        The DeepSeek usage API only accepts windows aligned to whole day
+        boundaries, so we request [today 00:00, tomorrow 00:00) in local time.
+        """
+        now_dt = datetime.now()
+        start_dt = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = start_dt.replace(day=start_dt.day + 1)
+        return int(start_dt.timestamp()), int(end_dt.timestamp())
+
+    def _ds_balance_from_summary(self, data: Any):
+        """Extract (balance, currency) from a get_user_summary payload. Raises on failure."""
+        if data.get('code') != 0:
+            raise ValueError(f"接口返回错误: {data.get('msg', '未知错误')}")
+        biz_data = (data.get('data') or {}).get('biz_data') or {}
+        wallets = biz_data.get('normal_wallets') or []
+        balance = None
+        currency = None
+        for wallet in wallets:
+            if wallet.get('currency') == 'CNY':
+                balance = wallet.get('balance')
+                currency = 'CNY'
+                break
+        if balance is None and wallets:
+            balance = wallets[0].get('balance')
+            currency = wallets[0].get('currency')
+        if balance is None:
+            raise ValueError('响应中未找到余额数据')
+        return float(balance), currency or 'CNY'
+
+    def _ds_get(self, url: str, token: str) -> Any:
+        """Synchronous GET to a DeepSeek endpoint with Bearer auth."""
+        req = urllib.request.Request(url, headers=self.build_deepseek_headers(token))
+        log_api_request(url)
+        with urllib.request.urlopen(req, timeout=self.DEEPSEEK_TIMEOUT) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+
+    def parse_deepseek_usage(self, data: Any) -> Dict:
+        """Parse /api/v0/usage/by_api_key/amount into today's request & token totals.
+
+        Expected biz_data:
+          series: [ { api_key, model, buckets: [ { time, usage: {
+             REQUEST, RESPONSE_TOKEN, PROMPT_CACHE_HIT_TOKEN, PROMPT_CACHE_MISS_TOKEN } } ] } ]
+        """
+        if data.get('code') not in (0, None):
+            raise ValueError(f"接口返回错误: {data.get('msg', '未知错误')}")
+        biz_data = (data.get('data') or {}).get('biz_data') or {}
+        series = biz_data.get('series') or []
+        requests = 0
+        tokens = 0
+        for series_item in series:
+            for bucket in (series_item.get('buckets') or []):
+                usage = bucket.get('usage') or {}
+                requests += int(usage.get('REQUEST') or 0)
+                tokens += (int(usage.get('RESPONSE_TOKEN') or 0)
+                           + int(usage.get('PROMPT_CACHE_HIT_TOKEN') or 0)
+                           + int(usage.get('PROMPT_CACHE_MISS_TOKEN') or 0))
+        return {'requests': requests, 'tokens': tokens}
+
+    def fetch_deepseek(self, token: str, callback: Callable[[Dict], None]):
+        """Fetch DeepSeek balance + today's usage asynchronously."""
+        def _fetch():
+            try:
+                start, end = self._deepseek_today_range()
+                tz = int(self._local_tz_offset_sec())
+                summary = self._ds_get(self.DEEPSEEK_BALANCE_URL, token)
+                balance, currency = self._ds_balance_from_summary(summary)
+                usage_url = f"{self.DEEPSEEK_USAGE_URL}?start={start}&end={end}&tz={tz}"
+                usage_data = self._ds_get(usage_url, token)
+                usage = self.parse_deepseek_usage(usage_data)
+                result = {'deepseek': {
+                    'balance': balance,
+                    'currency': currency,
+                    'requests': usage['requests'],
+                    'tokens': usage['tokens'],
+                }}
+                log_api_response(200, result)
+                callback(result)
+            except urllib.error.HTTPError as e:
+                error_msg = f"HTTP {e.code}: {e.reason}"
+                log_api_error(error_msg)
+                callback({'deepseek_error': error_msg})
+            except urllib.error.URLError as e:
+                error_msg = f"网络错误: {e.reason}"
+                log_api_error(error_msg)
+                callback({'deepseek_error': error_msg})
+            except Exception as e:
+                error_msg = str(e)
+                log_api_error(error_msg)
+                callback({'deepseek_error': error_msg})
+
+        thread = threading.Thread(target=_fetch, daemon=True)
+        thread.start()
+        return thread
+
+    # ------------------------------------------------------------------
+    # CommandCode
+    # ------------------------------------------------------------------
+
+    def build_cc_headers(self, token: str) -> Dict[str, str]:
+        """Build HTTP headers for CommandCode internal API requests."""
+        return {
+            'Accept': '*/*',
+            'Content-Type': 'application/json',
+            'Origin': 'https://commandcode.ai',
+            'Referer': 'https://commandcode.ai/',
+            'Cookie': f'{COMMANDCODE_TOKEN_COOKIE}={token}',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+
+    def _cc_get(self, url: str, token: str) -> Any:
+        """Perform a synchronous GET to a CommandCode endpoint and return parsed JSON."""
+        req = urllib.request.Request(url, headers=self.build_cc_headers(token))
+        log_api_request(url)
+        with urllib.request.urlopen(req, timeout=self.COMMANDCODE_TIMEOUT) as resp:
+            raw_data = resp.read().decode('utf-8')
+            return json.loads(raw_data)
+
+    def fetch_commandcode(self, token: str, callback: Callable[[Dict], None]):
+        """Fetch CommandCode usage (5-hour / weekly / monthly) asynchronously."""
+        def _fetch():
+            try:
+                credits_data = self._cc_get(self.COMMANDCODE_CREDITS_URL, token)
+                period_end = None
+                try:
+                    subs_data = self._cc_get(self.COMMANDCODE_SUBSCRIPTIONS_URL, token)
+                    period_end = ((subs_data or {}).get('data') or {}).get('currentPeriodEnd')
+                except Exception:
+                    period_end = None
+                result = {'cc': self.parse_commandcode(credits_data, period_end)}
+                log_api_response(200, result)
+                callback(result)
+            except urllib.error.HTTPError as e:
+                error_msg = f"HTTP {e.code}: {e.reason}"
+                log_api_error(error_msg)
+                callback({'cc_error': error_msg})
+            except urllib.error.URLError as e:
+                error_msg = f"网络错误: {e.reason}"
+                log_api_error(error_msg)
+                callback({'cc_error': error_msg})
+            except Exception as e:
+                error_msg = str(e)
+                log_api_error(error_msg)
+                callback({'cc_error': error_msg})
+
+        thread = threading.Thread(target=_fetch, daemon=True)
+        thread.start()
+        return thread
+
+    def _cc_make_segment(self, used: Optional[float], cap: Optional[float],
+                         reset_at_ms: Any, unlimited: bool = False) -> Dict:
+        """Build one usage segment ({rolling, weekly, monthly}) dict."""
+        if unlimited:
+            return {'percent': None, 'reset_sec': None, 'reset_time': '--',
+                    'status': 'unlimited'}
+        if used is None or cap is None or cap <= 0:
+            return {'percent': None, 'reset_sec': None, 'reset_time': '--',
+                    'status': 'unavailable'}
+        percent = used / cap * 100.0
+        reset_sec = None
+        if reset_at_ms:
+            reset_sec = max(0, int(reset_at_ms / 1000.0 - time.time()))
+        return {
+            'percent': percent,
+            'reset_sec': reset_sec,
+            'reset_time': self.format_reset_time(reset_sec) if reset_sec is not None else '--',
+            'status': 'ok'
+        }
+
+    def parse_commandcode(self, data: Any, period_end: Any = None) -> Dict:
+        """Parse the /internal/billing/credits response into rolling/weekly/monthly.
+
+        Expected shape (verified live):
+          credits: { monthlyCredits, monthlyCreditsGranted, ... }
+          windowLimits: {
+             limited: bool,
+             fiveHour: { used, cap, exceeded, resetAt (epoch ms) },
+             weekly:   { used, cap, exceeded, resetAt (epoch ms) }
+          }
+        Monthly usage = (granted - remaining) / granted.
+        Monthly reset time is taken from the subscription currentPeriodEnd.
+        """
+        window_limits = (data or {}).get('windowLimits') or {}
+        credits = (data or {}).get('credits') or {}
+        limited = window_limits.get('limited', True)
+
+        five = window_limits.get('fiveHour') or {}
+        weekly = window_limits.get('weekly') or {}
+
+        unlimited = limited is False
+        rolling = self._cc_make_segment(
+            _cc_num(five.get('used')), _cc_num(five.get('cap')),
+            five.get('resetAt'), unlimited=unlimited)
+        week = self._cc_make_segment(
+            _cc_num(weekly.get('used')), _cc_num(weekly.get('cap')),
+            weekly.get('resetAt'), unlimited=unlimited)
+
+        granted = _cc_num(credits.get('monthlyCreditsGranted'))
+        remaining = _cc_num(credits.get('monthlyCredits'))
+        monthly_used = (granted - remaining) if (granted is not None and remaining is not None) else None
+        monthly = self._cc_make_segment(monthly_used, granted, None)
+        if monthly['status'] == 'ok' and period_end:
+            end_sec = _cc_parse_iso_timestamp(period_end)
+            if end_sec is not None:
+                reset_sec = max(0, int(end_sec - time.time()))
+                monthly['reset_sec'] = reset_sec
+                monthly['reset_time'] = self.format_reset_time(reset_sec)
+
+        return {'rolling': rolling, 'weekly': week, 'monthly': monthly}
