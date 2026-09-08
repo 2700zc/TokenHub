@@ -292,10 +292,13 @@ class FloatingWindow:
         block = tk.Frame(inner, bg='#ffffff', height=self.ROW_HEIGHT)
         block.pack(fill=tk.X)
         block.pack_propagate(False)
+        block.grid_propagate(False)
+        block.grid_rowconfigure(0, weight=1)
+        block.grid_columnconfigure(0, minsize=self.VENDOR_WIDTH, weight=0)
 
         # Vendor label column
         vendor = tk.Frame(block, bg='#ffffff', width=self.VENDOR_WIDTH)
-        vendor.pack(side=tk.LEFT, fill=tk.Y, padx=(4, 0))
+        vendor.grid(row=0, column=0, sticky='nsw', padx=(4, 0))
         vendor.pack_propagate(False)
 
         dot = tk.Label(vendor, text='●', font=('Segoe UI', 9),
@@ -304,18 +307,19 @@ class FloatingWindow:
         tk.Label(vendor, text=provider['name'], font=('Microsoft YaHei', 10, 'bold'),
                  bg='#ffffff', fg=self.text_color).pack(side=tk.LEFT, padx=(4, 0))
 
-        if len(metrics) > 1:
-            for mi, (section_key, label) in enumerate(metrics):
-                if mi > 0:
-                    self._pack_vsep(block)
-                cell = tk.Frame(block, bg='#ffffff')
-                cell.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-                self._build_metric_cell(cell, section_key, label, color)
-        else:
-            # Single metric (e.g. DeepSeek balance) spans remaining width
+        metric_col = 1
+        for mi, (section_key, label) in enumerate(metrics):
+            if mi > 0:
+                sep = tk.Frame(block, bg='#e6e6e6', width=1)
+                sep.grid(row=0, column=metric_col, sticky='ns', pady=8, padx=8)
+                block.grid_columnconfigure(metric_col, minsize=1, weight=0)
+                metric_col += 1
+
             cell = tk.Frame(block, bg='#ffffff')
-            cell.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            self._build_metric_cell(cell, metrics[0][0], metrics[0][1], color)
+            cell.grid(row=0, column=metric_col, sticky='nsew')
+            block.grid_columnconfigure(metric_col, weight=1, uniform='metric')
+            self._build_metric_cell(cell, section_key, label, color)
+            metric_col += 1
 
     @staticmethod
     def _pack_vsep(block):
@@ -327,22 +331,29 @@ class FloatingWindow:
                            label: str, color: str):
         """Build the two-line metric cell and register its widgets."""
         is_cc = section_key.startswith('cc_')
+        cell.grid_rowconfigure(0, weight=1)
+        cell.grid_rowconfigure(1, weight=0)
+        cell.grid_columnconfigure(0, weight=1)
+        cell.grid_columnconfigure(1, weight=0)
 
         row1 = tk.Frame(cell, bg='#ffffff')
-        row1.pack(fill=tk.X, pady=(9, 0))
+        row1.grid(row=0, column=0, sticky='nsew', pady=(9, 0))
+        row1.grid_columnconfigure(0, weight=1)
+        row1.grid_columnconfigure(1, weight=0)
 
         tk.Label(row1, text=label, font=('Microsoft YaHei', 8),
-                 bg='#ffffff', fg=self.subtitle_color).pack(side=tk.LEFT)
+                 bg='#ffffff', fg=self.subtitle_color,
+                 anchor='w').grid(row=0, column=0, sticky='w')
 
         pct = tk.Label(row1, text='--', font=('Microsoft YaHei', 12, 'bold'),
-                       bg='#ffffff', fg=color)
-        pct.pack(side=tk.RIGHT, padx=(7, 0))
+                       bg='#ffffff', fg=color, anchor='e', justify='right')
+        pct.grid(row=0, column=1, sticky='e', padx=(7, 0))
 
         reset_lbl = tk.Label(cell, text=self._section_reset_text(section_key),
                              font=('Microsoft YaHei', 8),
                              bg='#ffffff', fg=self.subtitle_color,
                              anchor='w')
-        reset_lbl.pack(fill=tk.X, pady=(1, 0))
+        reset_lbl.grid(row=1, column=0, sticky='ew', pady=(1, 0))
 
         self.sections[section_key] = {
             'percent': pct,
@@ -626,7 +637,7 @@ class FloatingWindow:
                 req_text = f"{requests} 次" if requests is not None else "--"
                 self.sections['deepseek_requests']['percent'].configure(text=req_text)
             if 'deepseek_tokens' in self.sections:
-                tok_text = f"{self._fmt_int(tokens)} Token" if tokens is not None else "--"
+                tok_text = f"{self._fmt_compact_int(tokens)}" if tokens is not None else "--"
                 self.sections['deepseek_tokens']['percent'].configure(text=tok_text)
 
     def _clear_section(self, section_name: str):
@@ -659,6 +670,25 @@ class FloatingWindow:
             return f"{int(value):,}"
         except (TypeError, ValueError):
             return '--'
+
+    @staticmethod
+    def _fmt_compact_int(value: Any) -> str:
+        """Format a large integer into a compact Chinese unit form."""
+        if value is None:
+            return '--'
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            return '--'
+
+        abs_num = abs(num)
+        if abs_num >= 100000000:
+            text = f"{num / 100000000:.1f}".rstrip('0').rstrip('.')
+            return f"{text}亿"
+        if abs_num >= 10000:
+            text = f"{num / 10000:.1f}".rstrip('0').rstrip('.')
+            return f"{text}万"
+        return f"{num:,}"
 
     def _apply_usage_section(self, section_name: str, usage: Dict[str, Any]):
         """Apply parsed usage data (percent + reset) to one usage section."""
