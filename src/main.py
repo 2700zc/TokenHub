@@ -139,10 +139,10 @@ class TokenHubApp:
         # Show initial state
         self.floating_window.update_data({'error': '等待配置'})
         
-        # Check if server_id is configured (only relevant when OpenCode display is on)
-        if self.config.opencode_enabled and not self.config.server_id:
-            self.floating_window.update_data({'error': '请配置 Server ID'})
-            logger.warning("Server ID 未配置，请在 config.json 中设置 server_id 字段")
+        # Check if opencode config is valid (only relevant when OpenCode display is on)
+        if self.config.opencode_enabled and not self.config.is_valid():
+            self.floating_window.update_data({'error': '请先配置'})
+            logger.warning("OpenCode 配置不完整，请打开设置窗口填写")
         else:
             self._fetch_data()
     
@@ -162,8 +162,6 @@ class TokenHubApp:
     def _on_config_saved(self):
         """Called when configuration is saved."""
         logger.info("配置已保存，准备获取数据...")
-        # Update API client with new server_id
-        self.api.server_id = self.config.server_id
         # Apply column visibility
         self.floating_window.set_columns(self.config.opencode_enabled, self.config.deepseek_enabled, self.config.commandcode_enabled)
         # Fetch data immediately after config is saved

@@ -9,7 +9,7 @@ import json
 import threading
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Callable, Optional, Any
 
 try:
@@ -18,6 +18,37 @@ except ImportError:
     from logger import logger, log_api_request, log_api_response, log_api_error
 
 COMMANDCODE_TOKEN_COOKIE = '__Secure-commandcode_prod_.session_token'
+
+CONSOLE_SESSION_COOKIE = '__Host-console_session'
+GO_STATUS_URL = "https://opencode.ai/console/api/go/status"
+
+
+def extract_console_session(raw: str) -> str:
+    """Extract the opencode console session value from various input formats.
+
+    Accepts:
+      - a full curl command copied from the console page (Windows cmd '^' escapes ok)
+      - a raw Cookie string (the -b "..." value)
+      - the bare session value itself (st_xxxxxxxx-...)
+
+    The new console API only needs the __Host-console_session cookie.
+    Returns '' when nothing is found.
+    """
+    if not raw:
+        return ''
+    # Strip Windows cmd line-continuation / escape carets
+    text = re.sub(r'\^[ \t]*\r?\n', '', raw)
+    text = re.sub(r'\^(.)', r'\1', text)
+    # 1) Named cookie inside a full cookie/curl string
+    match = re.search(
+        re.escape(CONSOLE_SESSION_COOKIE) + r"=([^;\"'\s]+)", text)
+    if match:
+        return match.group(1).strip()
+    # 2) Bare session value pasted alone
+    match = re.search(r'st_[0-9a-f\-]{20,}', text)
+    if match:
+        return match.group(0).strip()
+    return ''
 
 
 def extract_commandcode_token(raw: str) -> str:
@@ -74,7 +105,7 @@ def _cc_parse_iso_timestamp(value: Any) -> Optional[int]:
 class ApiClient:
     """API client for fetching OpenCode.ai usage data."""
     
-    BASE_URL = "https://opencode.ai/_server"
+    GO_STATUS_URL = GO_STATUS_URL
     TIMEOUT = 10
     
     DEEPSEEK_BALANCE_URL = "https://platform.deepseek.com/api/v0/users/get_user_summary"
@@ -86,43 +117,41 @@ class ApiClient:
     COMMANDCODE_TIMEOUT = 10
     
     def __init__(self, server_id: str = ""):
-        """Initialize API client with server ID from config."""
+        """Initialize API client.
+
+        server_id is kept for backward compatibility but is no longer used
+        since the console go/status API only needs workspace_id + session cookie.
+        """
         self.server_id = server_id
     
-    def build_url(self, workspace_id: str) -> str:
-        """Build API URL with dynamic workspace_id."""
-        # args parameter JSON structure (from curl command)
-        args_json = {
-            "t": {
-                "t": 9,
-                "i": 0,
-                "l": 1,
-                "a": [{"t": 1, "s": workspace_id}],
-                "o": 0
-            },
-            "f": 31,
-            "m": []
-        }
-        args_encoded = urllib.parse.quote(json.dumps(args_json))
-        return f"{self.BASE_URL}?id={self.server_id}&args={args_encoded}"
-    
-    def build_headers(self, workspace_id: str, cookie: str) -> Dict[str, str]:
-        """Build HTTP headers for the request."""
+    def build_headers(self, workspace_id: str, session_token: str) -> Dict[str, str]:
+        """Build HTTP headers for the console go/status API request."""
         return {
-            'X-Server-Id': self.server_id,
-            'X-Server-Instance': 'server-fn:0',
-            'Referer': f'https://opencode.ai/workspace/{workspace_id}/go',
-            'Cookie': cookie,
+            'Accept': '*/*',
+            'x-org-id': workspace_id,
+            'Cookie': f'{CONSOLE_SESSION_COOKIE}={session_token}',
+            'Referer': f'https://opencode.ai/console/{workspace_id}/models',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
     
     def fetch(self, workspace_id: str, cookie: str, callback: Callable[[Dict], None]):
-        """Fetch usage data asynchronously in a background thread."""
+        """Fetch usage data asynchronously in a background thread.
+
+        cookie may be the full browser cookie string, a curl command, or the
+        bare __Host-console_session value.
+        """
         def _fetch():
             try:
-                url = self.build_url(workspace_id)
+                session_token = extract_console_session(cookie)
+                if not session_token:
+                    error_msg = ("Cookie 中未找到 __Host-console_session，"
+                                 "请从 opencode 控制台重新复制 curl 并重新导入")
+                    log_api_error(error_msg)
+                    callback({'error': error_msg})
+                    return
+                url = self.GO_STATUS_URL
                 log_api_request(url)
-                headers = self.build_headers(workspace_id, cookie)
+                headers = self.build_headers(workspace_id, session_token)
                 req = urllib.request.Request(url, headers=headers)
                 
                 with urllib.request.urlopen(req, timeout=self.TIMEOUT) as resp:
@@ -130,19 +159,18 @@ class ApiClient:
                     raw_data = resp.read().decode('utf-8')
                     logger.debug(f"API 原始响应: {raw_data[:500]}")
                     
-                    # Try standard JSON first
                     try:
                         data = json.loads(raw_data)
-                        result = self.parse_response(data)
                     except json.JSONDecodeError:
-                        # If not JSON, try parsing as JavaScript response
-                        logger.debug("标准 JSON 解析失败，尝试 JavaScript 响应解析")
-                        result = self.parse_js_response(raw_data)
+                        raise ValueError(f"接口返回非 JSON 数据: {raw_data[:200]}")
                     
+                    result = self.parse_go_status(data)
                     log_api_response(status_code, result)
                     callback(result)
             except urllib.error.HTTPError as e:
                 error_msg = f"HTTP {e.code}: {e.reason}"
+                if e.code == 401:
+                    error_msg = "登录会话已失效(401)，请重新复制并导入 curl"
                 log_api_error(error_msg)
                 callback({'error': error_msg})
             except urllib.error.URLError as e:
@@ -158,63 +186,54 @@ class ApiClient:
         thread.start()
         return thread
     
-    def parse_js_response(self, raw_text: str) -> Dict:
-        """Parse JavaScript-style response (not standard JSON).
-        
-        Handles responses like:
-        ;0x00000126;((self.$R=...$R[0]={mine:!0,...rollingUsage:$R[1]={status:"ok",resetInSec:8551,usagePercent:0}...)($R["server-fn:0"]))
+    def parse_go_status(self, data: Any) -> Dict:
+        """Parse the console /api/go/status response into rolling/weekly/monthly.
+
+        Expected shape (verified live 2026-10):
+          {
+            "product": "go",
+            "access": {
+              "endsAt": "2026-11-08T01:21:55.000Z",
+              "meters": {
+                "fiveHour": { "resetsAt": "...", "limitMicroCents": "1200000000", "usedMicroCents": "4373874" },
+                "week":     { "resetsAt": "...", "limitMicroCents": "3000000000", "usedMicroCents": "..." },
+                "month":    { "resetsAt": "...", "limitMicroCents": "6000000000", "usedMicroCents": "..." }
+              }
+            }
+          }
         """
+        meters = ((data or {}).get('access') or {}).get('meters') or {}
+        now = time.time()
+        mapping = [('rollingUsage', 'fiveHour'), ('weeklyUsage', 'week'),
+                   ('monthlyUsage', 'month')]
         result = {}
-        
-        # Extract usage data using regex
-        # Matches both old format: ...usagePercent:0}
-        # and new format: ...usagePercent:19.3,usage:231665560,limit:1200000000}
-        patterns = {
-            'rollingUsage': r'rollingUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:([\d.]+)',
-            'weeklyUsage': r'weeklyUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:([\d.]+)',
-            'monthlyUsage': r'monthlyUsage:\$R\[\d+\]=\{status:"([^"]+)",resetInSec:(\d+),usagePercent:([\d.]+)'
-        }
-        
-        for key, pattern in patterns.items():
-            match = re.search(pattern, raw_text)
-            if match:
-                status = match.group(1)
-                reset_sec = int(match.group(2))
-                percent = float(match.group(3))
-                
-                result[key] = {
+        for result_key, meter_key in mapping:
+            meter = meters.get(meter_key)
+            used = _cc_num(meter.get('usedMicroCents')) if meter else None
+            limit = _cc_num(meter.get('limitMicroCents')) if meter else None
+            resets_at = _cc_parse_iso_timestamp(
+                meter.get('resetsAt')) if meter else None
+            
+            if meter and used is not None and limit is not None and limit > 0:
+                percent = used / limit * 100.0
+                reset_sec = None
+                reset_time = '--'
+                if resets_at is not None:
+                    reset_sec = max(0, int(resets_at - now))
+                    reset_time = self.format_reset_time(reset_sec)
+                result[result_key] = {
                     'percent': percent,
                     'reset_sec': reset_sec,
-                    'reset_time': self.format_reset_time(reset_sec) if reset_sec else '--',
-                    'status': status
+                    'reset_time': reset_time,
+                    'status': 'ok'
                 }
             else:
-                result[key] = {
+                result[result_key] = {
                     'percent': None,
                     'reset_sec': None,
                     'reset_time': '--',
-                    'status': 'unknown'
+                    'status': 'unavailable'
                 }
-        
-        return result
-    
-    def parse_response(self, data: Any) -> Dict:
-        """Parse API response into structured usage data."""
-        result = {}
-        
-        for key in ['rollingUsage', 'weeklyUsage', 'monthlyUsage']:
-            usage = data.get(key, {})
-            percent = usage.get('usagePercent', None)
-            reset_sec = usage.get('resetInSec', None)
-            status = usage.get('status', 'unknown')
-            
-            result[key] = {
-                'percent': percent,
-                'reset_sec': reset_sec,
-                'reset_time': self.format_reset_time(reset_sec) if reset_sec else '--',
-                'status': status
-            }
-        
         return result
     
     def format_reset_time(self, seconds: int) -> str:
@@ -346,7 +365,7 @@ class ApiClient:
         """
         now_dt = datetime.now()
         start_dt = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_dt = start_dt.replace(day=start_dt.day + 1)
+        end_dt = start_dt + timedelta(days=1)
         return int(start_dt.timestamp()), int(end_dt.timestamp())
 
     def _ds_balance_from_summary(self, data: Any):

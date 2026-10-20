@@ -710,7 +710,7 @@ class FloatingWindow:
             info['percent'].configure(text=self._fmt_cc_pct(percent))
             info['reset'].configure(text=f'距离重置: {reset_time}')
         else:
-            text = f"{percent}%" if percent is not None else "--"
+            text = self._fmt_cc_pct(percent)
             info['percent'].configure(text=text)
             info['reset'].configure(text=f'距离重置: {reset_time}')
 

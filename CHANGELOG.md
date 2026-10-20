@@ -1,5 +1,29 @@
 # 更新日志
 
+## [0.1.2] - 2026-09-30
+
+### 修复：月末最后一天 DeepSeek 数据不显示
+
+#### 问题原因
+`src/api.py` 的 `_deepseek_today_range()` 计算“明天”时使用 `start_dt.replace(day=start_dt.day + 1)`。
+在每月最后一天（如 9 月 30 日），`day=31` 超出当月合法范围，`datetime.replace` 直接抛出
+`ValueError: day 31 must be in range 1..30 for month 9 in year 2026`，导致 DeepSeek 余额和用量请求
+在发出前即失败，悬浮窗 DeepSeek 各列全部显示 `--`。
+
+#### 修改内容
+
+| 文件 | 说明 |
+| --- | --- |
+| `src/api.py` | `_deepseek_today_range()` 改用 `start_dt + timedelta(days=1)` 计算次日零点，正确处理月末 / 年末 / 闰年跨日 |
+
+#### 验证
+- 本地复现：9/30 运行原逻辑抛出与 exe 日志一致的 `ValueError: day 31 must be in range 1..30 for month 9 in year 2026`
+- 修复后直连接口实测：`today range` 正确为 9/30 00:00 ~ 10/1 00:00，余额 `23.93 CNY`、今日用量正常解析
+- 边界验证：9/30、12/31、2/28 均正确跨到次日
+
+### 构建
+- 重新打包产物：`dist/TokenHub.exe`（PyInstaller onefile，无控制台窗口）
+
 ## [0.1.1] - 2026-09-08
 
 ### 优化：悬浮窗改为“纵向厂商块”布局

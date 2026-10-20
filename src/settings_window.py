@@ -40,10 +40,20 @@ def parse_curl_text(text: str) -> dict:
         match = re.search(r'-b\s+"([^"]+)"', text)
         if match:
             result['cookie'] = match.group(1).strip()
-
     match = re.search(r'/workspace/(wrk_[^"\s/]+)', text, re.IGNORECASE)
     if match:
         result['workspace_id'] = match.group(1).strip()
+
+    # New console API: x-org-id header and /console/<wrk_...>/... paths
+    if 'workspace_id' not in result:
+        match = re.search(r'[Xx]-[Oo]rg-[Ii][Dd]:\s*([a-zA-Z0-9_]+)', text)
+        if match:
+            result['workspace_id'] = match.group(1).strip()
+
+    if 'workspace_id' not in result:
+        match = re.search(r'/console/(wrk_[^"\s/]+)', text, re.IGNORECASE)
+        if match:
+            result['workspace_id'] = match.group(1).strip()
 
     if 'workspace_id' not in result:
         match = re.search(r'%22s%22%3A%22(wrk_[^%]+)%22', text)
@@ -171,32 +181,10 @@ class SettingsWindow:
         self.cookie_text.pack(fill=tk.X, pady=5)
         self.cookie_text.insert(tk.END, self.config.cookie)
         
-        cookie_hint = tk.Label(cookie_frame, text="从浏览器开发者工具复制完整 Cookie 字符串（以 auth= 开头）",
+        cookie_hint = tk.Label(cookie_frame, text="从浏览器开发者工具复制完整 Cookie 或整段 curl（需要包含 __Host-console_session）",
                                font=('Microsoft YaHei', 8),
                                bg=bg, fg=accent)
         cookie_hint.pack(anchor=tk.W)
-        
-        # Server ID section
-        server_frame = tk.Frame(main_frame, bg=bg)
-        server_frame.pack(fill=tk.X, pady=10)
-        
-        server_label = tk.Label(server_frame, text="Server ID:",
-                                font=('Microsoft YaHei', 10),
-                                bg=bg, fg=fg)
-        server_label.pack(anchor=tk.W)
-        
-        self.server_entry = tk.Entry(server_frame, width=50,
-                                     font=('Microsoft YaHei', 10),
-                                     bg='#ffffff' if not self.theme_colors.get('is_dark', False) else '#2d2d2d',
-                                     fg='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff',
-                                     insertbackground='#000000' if not self.theme_colors.get('is_dark', False) else '#ffffff')
-        self.server_entry.pack(fill=tk.X, pady=5)
-        self.server_entry.insert(0, self.config.server_id)
-        
-        server_hint = tk.Label(server_frame, text="从浏览器开发者工具的 Request Headers 中复制 X-Server-Id 的值",
-                               font=('Microsoft YaHei', 8),
-                               bg=bg, fg=accent)
-        server_hint.pack(anchor=tk.W)
         
         # Button colors based on theme
         if self.theme_colors.get('is_dark', False):
@@ -211,7 +199,7 @@ class SettingsWindow:
             btn_active_fg = '#ffffff'
         
         # Action buttons row: Import curl and Reset side by side
-        action_frame = tk.Frame(server_frame, bg=bg)
+        action_frame = tk.Frame(main_frame, bg=bg)
         action_frame.pack(fill=tk.X, pady=(8, 0))
 
         import_btn = tk.Button(action_frame, text="从curl命令导入",
@@ -411,13 +399,11 @@ class SettingsWindow:
         state = 'normal' if self.opencode_var.get() else 'disabled'
         self.ws_entry.config(state=state)
         self.cookie_text.config(state=state)
-        self.server_entry.config(state=state)
     
     def _save(self):
         """Save settings and close window."""
         workspace_id = self.ws_entry.get().strip()
         cookie = self.cookie_text.get('1.0', tk.END).strip()
-        server_id = self.server_entry.get().strip()
         opencode_enabled = self.opencode_var.get()
         deepseek_enabled = self.deepseek_var.get()
         deepseek_token = self.deepseek_token_entry.get().strip()
@@ -430,10 +416,6 @@ class SettingsWindow:
             
             if not cookie:
                 messagebox.showwarning("警告", "请输入 Cookie")
-                return
-            
-            if not server_id:
-                messagebox.showwarning("警告", "请输入 Server ID")
                 return
         
         # Validate DeepSeek token only when DeepSeek display is enabled
@@ -458,7 +440,6 @@ class SettingsWindow:
         # Save to config
         self.config.workspace_id = workspace_id
         self.config.cookie = cookie
-        self.config.server_id = server_id
         self.config.opencode_enabled = opencode_enabled
         self.config.deepseek_enabled = deepseek_enabled
         self.config.deepseek_token = deepseek_token if deepseek_enabled else ""
@@ -485,7 +466,6 @@ class SettingsWindow:
         self._apply_opencode_state()
         self.ws_entry.delete(0, tk.END)
         self.cookie_text.delete('1.0', tk.END)
-        self.server_entry.delete(0, tk.END)
         self.commandcode_var.set(False)
         self.commandcode_entry.delete(0, tk.END)
         self.commandcode_entry.config(state='disabled')
@@ -543,8 +523,6 @@ class SettingsWindow:
                 missing.append("Workspace ID")
             if not parsed.get('cookie'):
                 missing.append("Cookie")
-            if not parsed.get('server_id'):
-                missing.append("Server ID")
 
             if parsed.get('workspace_id'):
                 self.ws_entry.delete(0, tk.END)
@@ -552,15 +530,11 @@ class SettingsWindow:
             if parsed.get('cookie'):
                 self.cookie_text.delete('1.0', tk.END)
                 self.cookie_text.insert(tk.END, parsed['cookie'])
-            if parsed.get('server_id'):
-                self.server_entry.delete(0, tk.END)
-                self.server_entry.insert(0, parsed['server_id'])
 
             if missing:
                 msg = f"成功导入以下字段：\n" \
                       f"  Workspace ID: {'✓' if parsed.get('workspace_id') else '✗'}\n" \
-                      f"  Cookie: {'✓' if parsed.get('cookie') else '✗'}\n" \
-                      f"  Server ID: {'✓' if parsed.get('server_id') else '✗'}\n\n" \
+                      f"  Cookie: {'✓' if parsed.get('cookie') else '✗'}\n\n" \
                       f"以下字段未能自动识别，请手动填写：\n- " + "\n- ".join(missing)
                 messagebox.showinfo("部分导入成功", msg, parent=dialog)
             else:

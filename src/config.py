@@ -93,7 +93,7 @@ class Config:
     
     def is_valid(self):
         """Check if configuration has valid values."""
-        return bool(self.workspace_id and self.cookie and self.server_id)
+        return bool(self.workspace_id and self.cookie)
     
     def deepseek_is_valid(self):
         """Check if DeepSeek balance display is enabled and has a token."""

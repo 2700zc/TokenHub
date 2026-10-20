@@ -18,50 +18,45 @@ HELP_CONTENT = """
 
 1. 登录系统：使用您的账号登录 OpenCode.ai 平台。
 
-2. 进入 Go 页面：在浏览器中打开目标 Go 语言项目的页面。
-
-3. 复制 Workspace ID：
-   ◦ 请查看浏览器地址栏中的完整 URL，其格式通常如下：
-     https://opencode.ai/workspace/wrk_xxxx/go
-   ◦ 请找到 URL 中 /workspace/ 之后、第二个 / 之前的那一段字符。
+2. 获取 Workspace ID / Org ID：
+   ◦ 登录后打开 opencode 控制台页面（如 Models 页面），其地址栏 URL 格式如下：
+     https://opencode.ai/console/wrk_xxxx/models
+   ◦ 请找到 URL 中 /console/ 之后的那一段字符。
      例如，在上面的链接中，wrk_xxxx 就是您的 Workspace ID。
    ◦ 操作：用鼠标选中这段 ID（如 wrk_xxxx），右键复制或按 Ctrl+C (Windows) / Command+C (Mac) 进行复制。
    ◦ 填写：将复制的 ID 粘贴到本软件的 Workspace ID 输入框中。
 
 💡 提示：Workspace ID 通常以 wrk_ 开头，后面跟着数字和字母的组合。
+（也可以直接使用下方「从curl命令导入」一键完成，推荐。）
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-第二步：通过浏览器开发者工具获取 Cookie
+第二步：通过浏览器开发者工具导入 curl（推荐方式）
 
-1. 打开开发者工具：在已经打开 Go 页面的浏览器窗口中，按下键盘上的 F12 键。
+1. 打开开发者工具：在已经打开 opencode 控制台页面的浏览器窗口中，按下键盘上的 F12 键。
    *（如果按 F12 无效，请尝试 Fn + F12，或者右键点击页面空白处，在菜单中选择"检查"/"Inspect"）*
 
-2. 切换到 Network 标签：在开发者工具窗口的顶部菜单栏中，找到并点击 Network（网络）选项卡。如果标签页内是空的，请继续下一步。
+2. 切换到 Network 标签：在开发者工具窗口的顶部菜单栏中，找到并点击 Network（网络）选项卡。
 
 3. 刷新页面以捕获请求：
    ◦ 保持开发者工具处于打开状态，然后按 F5 或点击浏览器的刷新按钮，重新加载当前页面。
-   ◦ 刷新后，您会看到 Network 标签下出现一个不断增加的请求列表（包含图片、脚本、数据等）。
 
-4. 篮选并找到 _server 请求：
-   ◦ 在 Network 标签页的过滤栏（通常是一个输入框，带有"筛选"或"Filter"字样）中，输入 _server。
-   ◦ 列表将只显示包含 _server 关键字的请求。请找到名为 _server 或类似 /_server 的请求项，并点击它。
+4. 筛选并找到 go/status 请求：
+   ◦ 在 Network 标签页的过滤栏（Filter）中，输入 go/status。
+   ◦ 找到名为 status 或路径为 /console/api/go/status 的请求项并点击它。
 
-5. 提取 Cookie 值：
-   ◦ 点击 _server 请求后，会出现该请求的详细子标签页。请点击 Headers（标头）选项卡。
-   ◦ 向下滚动，找到 Request Headers（请求标头）区域。
-   ◦ 在该区域中，找到 Cookie: 这一行。它的值会是一长串字符，其中以 auth= 开头（例如：auth=Fexxxx...; other=...）。
-   ◦ 重要：您需要复制的是从 auth= 开始，直到该行结束的完整 Cookie 字符串。
-   ◦ 操作：用鼠标双击 Cookie 的值部分，全选后复制（Ctrl+C / Command+C）。
+5. 复制 curl 命令：
+   ◦ 右键该请求 → Copy → Copy as cURL（cmd/copy as cURL 均可）。
+   ◦ 回到本软件的设置窗口，点击「从curl命令导入」，粘贴整段 curl 并点击「解析并填入」。
+   ◦ 软件会自动提取 Workspace ID 和 Cookie（关键项是 __Host-console_session）。
 
-6. 提取 Server ID：
-   ◦ 仍在同一个 Headers 选项卡中，继续在 Request Headers 区域查找。
-   ◦ 找到 X-Server-Id: 这一行。它的值是一串较长的字符（例如：c7389bd0e731f80f...）。
-   ◦ 这个 Server ID 与 Cookie 在同一请求中，提取方式完全相同。
-   ◦ 操作：用鼠标双击 X-Server-Id 的值部分，全选后复制（Ctrl+C / Command+C）。
-   ◦ 填写：将复制的 Server ID 粘贴到 config.json 文件中的 server_id 字段内。
+手动方式（备选）：
+   ◦ 在该请求的 Request Headers 中找到 Cookie: 一行，复制其中 __Host-console_session=st_xxxx... 这一段
+     （连同名称和值一起复制，或整行完整 Cookie 也可以，软件会自动识别）。
+   ◦ 粘贴到软件的 Cookie 输入框中。
 
-⚠️ 注意：Cookie 是您的身份凭证，请勿泄露给他人。请确保复制的字符串包含完整的 auth=... 及其后的所有内容，直到分号或其他字段结束。
+⚠️ 注意：Cookie 是您的身份凭证，请勿泄露给他人。__Host-console_session 会定期失效，
+失效后悬浮窗会提示"登录会话已失效(401)"，此时按上述步骤重新导入一次即可。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -69,11 +64,9 @@ HELP_CONTENT = """
 
 1. 将第一步中复制的 Workspace ID 粘贴到软件的对应输入框。
 
-2. 将第二步中复制的完整 Cookie 字符串（以 auth= 开头）粘贴到软件的 Cookie 输入框中。
+2. 将第二步复制的整段 curl（或其中 __Host-console_session 一段）粘贴到软件的 Cookie 输入框中。
 
-3. 将第二步中复制的 Server ID 粘贴到软件的 Server ID 输入框中。
-
-4. 检查无误后，点击"保存"按钮即可。
+3. 检查无误后，点击"保存"按钮即可。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
